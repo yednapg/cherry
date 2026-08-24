@@ -448,7 +448,7 @@ final class ShellProcessController: @unchecked Sendable {
             environment[CherryControl.agentIDEnvironmentKey] = agentID
         }
 
-        let command: String
+        let shellCommand: String
         if let shellIntegration {
             environment["CHERRY_BOOTSTRAP_ZDOTDIR"] = shellIntegration.zdotdir
             if let startupCommand = configuration.startupCommand, !startupCommand.isEmpty {
@@ -458,14 +458,23 @@ final class ShellProcessController: @unchecked Sendable {
                 environment["CHERRY_ORIGINAL_ZDOTDIR"] = originalZDOTDIR
             }
             environment["ZDOTDIR"] = shellIntegration.zdotdir
-            command = "\(shellPath) -l"
+            shellCommand = "\(shellPath) -l"
         } else if let startupCommand = configuration.startupCommand, !startupCommand.isEmpty {
             // No shell integration: a login+interactive shell that execs the
             // startup command (mirrors the `execv` fallback at ~956-979).
-            command = "\(shellPath) -l -i -c \(singleQuoted("exec \(startupCommand)"))"
+            shellCommand = "\(shellPath) -l -i -c \(singleQuoted("exec \(startupCommand)"))"
         } else {
-            command = "\(shellPath) -l"
+            shellCommand = "\(shellPath) -l"
         }
+
+        // Ghostty adds `execEnvironment` to its inherited environment; omitting a
+        // key does not remove it. Cherry is often launched by an agent/tool runner
+        // that sets NO_COLOR=1, which made Codex deliberately emit monochrome output
+        // on the production native-PTY path. Match the host-managed forkpty path by
+        // removing inherited NO_COLOR unless the project explicitly configured it.
+        let command = configuration.environment["NO_COLOR"] == nil
+            ? "/usr/bin/env -u NO_COLOR \(shellCommand)"
+            : shellCommand
 
         return (command, environment)
     }
