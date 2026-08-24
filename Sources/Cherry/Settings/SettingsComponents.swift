@@ -1,25 +1,6 @@
 import AppKit
 import SwiftUI
 
-struct SettingsSearchField: View {
-    @Binding var text: String
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.secondary)
-
-            TextField("Search settings", text: $text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 15))
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 34)
-        .settingsSearchFieldSurface()
-    }
-}
-
 struct SettingsIconBadge: View {
     let systemImage: String
     var size: CGFloat = 32
@@ -73,13 +54,6 @@ private struct SettingsProminentGlassButtonModifier: ViewModifier {
     }
 }
 
-private struct SettingsSearchFieldSurfaceModifier: ViewModifier {
-    func body(content: Content) -> some View {
-        content
-            .glassEffect(.regular.interactive(), in: Capsule())
-    }
-}
-
 extension View {
     func settingsGroupedSurface() -> some View {
         modifier(SettingsGroupedSurfaceModifier())
@@ -91,10 +65,6 @@ extension View {
 
     func settingsProminentGlassButtonStyle() -> some View {
         modifier(SettingsProminentGlassButtonModifier())
-    }
-
-    func settingsSearchFieldSurface() -> some View {
-        modifier(SettingsSearchFieldSurfaceModifier())
     }
 
     func settingsRowPadding() -> some View {
@@ -136,6 +106,7 @@ struct SettingsPaneScroll<Content: View>: View {
             .padding(.top, 16)
             .padding(.bottom, 24)
             .frame(maxWidth: 660, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .navigationTitle(title)
         .navigationSubtitle(subtitle)
