@@ -10,6 +10,9 @@ final class CherryAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        MainActor.assumeIsolated {
+            CherryApplicationAppearance.apply(TerminalSettings.shared.appearance)
+        }
         if Bundle.main.object(forInfoDictionaryKey: "CFBundleIconName") == nil,
            let iconURL = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: iconURL) {
@@ -154,7 +157,6 @@ struct CherryApp: App {
     private static let projectWindowSceneID = "project"
 
     @NSApplicationDelegateAdaptor(CherryAppDelegate.self) private var appDelegate
-    @StateObject private var terminalSettings = TerminalSettings.shared
     @StateObject private var agentSettings = AgentSettings.shared
     @StateObject private var menuBarAgents = MenuBarAgentsModel()
     @State private var controlServer: CherryControlServer?
@@ -212,7 +214,6 @@ struct CherryApp: App {
 
         WindowGroup("Cherry", id: Self.projectWindowSceneID, for: String.self) { projectRoot in
             ProjectWindowView(projectRoot: projectRoot.wrappedValue)
-                .preferredColorScheme(terminalSettings.appearance.preferredColorScheme)
                 .onAppear {
                     guard controlServer == nil else { return }
                     let server = CherryControlServer(workspaceProvider: {
@@ -403,7 +404,6 @@ struct CherryApp: App {
 
         Settings {
             SettingsView()
-                .preferredColorScheme(terminalSettings.appearance.preferredColorScheme)
         }
     }
 

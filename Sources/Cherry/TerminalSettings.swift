@@ -136,7 +136,10 @@ final class TerminalSettings: ObservableObject {
     }
 
     @Published var appearance: CherryAppearancePreference {
-        didSet { save(appearance.rawValue, forKey: Keys.appearance) }
+        didSet {
+            CherryApplicationAppearance.apply(appearance)
+            save(appearance.rawValue, forKey: Keys.appearance)
+        }
     }
 
     @Published var lightTerminalThemeName: String {

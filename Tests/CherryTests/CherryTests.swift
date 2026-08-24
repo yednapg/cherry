@@ -8272,6 +8272,28 @@ private func claudeAlternateScreenFrame(rows: [String]) -> Data {
     #expect(CherryAppearancePreference.toggled(from: .system, currentColorScheme: .light) == .dark)
 }
 
+@MainActor
+@Test func applicationAppearanceClearsOverrideWhenReturningToSystem() throws {
+    let defaultsName = "CherryTests.ApplicationAppearance.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: defaultsName))
+    let application = NSApplication.shared
+    let previousAppearance = application.appearance
+    defer {
+        application.appearance = previousAppearance
+        defaults.removePersistentDomain(forName: defaultsName)
+    }
+    let settings = TerminalSettings(defaults: defaults)
+
+    settings.appearance = .light
+    #expect(application.appearance?.name == .aqua)
+
+    settings.appearance = .dark
+    #expect(application.appearance?.name == .darkAqua)
+
+    settings.appearance = .system
+    #expect(application.appearance == nil)
+}
+
 @Test func sidebarTerminalPathFormatterCompactsGithubRepositories() async throws {
     let home = "/Users/patrick"
 
