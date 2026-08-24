@@ -638,6 +638,7 @@ struct TerminalSurfaceView: NSViewRepresentable {
     let isActivePane: Bool
     let usesWorktreeSurfaceTransition: Bool
     let onActivate: (UUID) -> Void
+    let onClose: (UUID) -> Void
 
     func makeNSView(context: Context) -> GhosttyTerminalContainerView {
         TerminalPerformanceMonitor.recordRepresentableUpdate()
@@ -648,7 +649,8 @@ struct TerminalSurfaceView: NSViewRepresentable {
             allowsAutoFocus: isActivePane && !chromeState.isCommandPalettePresented,
             isActivePane: isActivePane,
             usesWorktreeSurfaceTransition: usesWorktreeSurfaceTransition,
-            onActivate: { onActivate(session.id) }
+            onActivate: { onActivate(session.id) },
+            onClose: { onClose(session.id) }
         )
         containerView.applySidebarAnimationState(
             isAnimating: chromeState.isSidebarAnimating,
@@ -665,7 +667,8 @@ struct TerminalSurfaceView: NSViewRepresentable {
             allowsAutoFocus: isActivePane && !chromeState.isCommandPalettePresented,
             isActivePane: isActivePane,
             usesWorktreeSurfaceTransition: usesWorktreeSurfaceTransition,
-            onActivate: { onActivate(session.id) }
+            onActivate: { onActivate(session.id) },
+            onClose: { onClose(session.id) }
         )
         nsView.applySidebarAnimationState(
             isAnimating: chromeState.isSidebarAnimating,

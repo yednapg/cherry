@@ -9973,7 +9973,13 @@ struct TerminalSplitSceneView: View {
                         chromeState: chromeState,
                         isActivePane: workspace.selectedSessionID == session.id,
                         usesWorktreeSurfaceTransition: usesWorktreeSurfaceTransition,
-                        onActivate: activate
+                        onActivate: activate,
+                        onClose: { [weak workspace = workspace] sessionID in
+                            guard let workspace,
+                                  let session = workspace.session(withID: sessionID)
+                            else { return }
+                            workspace.close(session, allowEmptyWorkspace: true)
+                        }
                     )
                     .frame(width: width(at: index, in: widths))
                     .roundedTerminalSplitPane(
@@ -10312,6 +10318,7 @@ private struct TerminalSceneView: View {
     let isActivePane: Bool
     let usesWorktreeSurfaceTransition: Bool
     let onActivate: (UUID) -> Void
+    let onClose: (UUID) -> Void
     @StateObject private var searchState = TerminalSearchState()
 
     var body: some View {
@@ -10321,7 +10328,8 @@ private struct TerminalSceneView: View {
                 chromeState: chromeState,
                 isActivePane: isActivePane,
                 usesWorktreeSurfaceTransition: usesWorktreeSurfaceTransition,
-                onActivate: onActivate
+                onActivate: onActivate,
+                onClose: onClose
             )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(

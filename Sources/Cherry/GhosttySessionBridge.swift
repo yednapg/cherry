@@ -414,6 +414,7 @@ final class GhosttySessionBridge: NSObject, TerminalSurfaceCloseDelegate, Termin
     private weak var searchState: TerminalSearchState?
     private var searchPresentationHandler: ((String?) -> Void)?
     private var searchDismissalHandler: (() -> Void)?
+    private var closeHandler: (() -> Void)?
     private var pointerStyle: TerminalPointerStyle = .text
     private var hoveredLink: String?
     private var isReleased = false
@@ -474,8 +475,8 @@ final class GhosttySessionBridge: NSObject, TerminalSurfaceCloseDelegate, Termin
     }
 
     private static func resolvedColorScheme() -> ColorScheme {
-        // Cherry sets its OWN appearance (`.preferredColorScheme(...)`), so honor
-        // that first — a user on Dark with a Light system would otherwise get a
+        // Cherry can set its own app-wide appearance, so honor an explicit
+        // preference first — a user on Dark with a Light system would otherwise get a
         // light background baked into a background-spawned agent's surface, which
         // Codex then probes via OSC 11 for its first input box. Only "follow
         // system" falls back to the OS setting (read directly; NSApp's appearance
@@ -677,6 +678,7 @@ final class GhosttySessionBridge: NSObject, TerminalSurfaceCloseDelegate, Termin
         searchState = nil
         searchPresentationHandler = nil
         searchDismissalHandler = nil
+        closeHandler = nil
         terminalView.freeSurface()
         terminalView.controller = nil
     }
@@ -770,8 +772,21 @@ final class GhosttySessionBridge: NSObject, TerminalSurfaceCloseDelegate, Termin
         scrollContainer?.synchronizeScrollState()
     }
 
+    func configureCloseHandler(_ handler: (() -> Void)?) {
+        closeHandler = handler
+    }
+
     func terminalDidClose(processAlive _: Bool) {
-        proxy.session?.stop()
+        guard let closeHandler else {
+            proxy.session?.stop()
+            return
+        }
+
+        // Ghostty sends this after its "Press any key to close" screen. Treat
+        // it as the one-shot surface-close request it is, rather than merely
+        // stopping a process that has already exited.
+        self.closeHandler = nil
+        closeHandler()
     }
 
     func terminalDidRequestClipboardConfirmation(
@@ -2416,9 +2431,11 @@ final class GhosttyTerminalContainerView: NSView {
         allowsAutoFocus: Bool = true,
         isActivePane: Bool = true,
         usesWorktreeSurfaceTransition: Bool = false,
-        onActivate: (() -> Void)? = nil
+        onActivate: (() -> Void)? = nil,
+        onClose: (() -> Void)? = nil
     ) {
         TerminalPerformanceMonitor.recordContainerConfigure()
+        session.ghosttyBridge.configureCloseHandler(onClose)
         let wasActivePane = self.isActivePane
         self.isActivePane = isActivePane
         activatePane = onActivate
