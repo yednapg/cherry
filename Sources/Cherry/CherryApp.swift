@@ -47,7 +47,9 @@ final class CherryAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
     // naive first/visible checks see "a window" on a windowless launch and
     // never open the default project window. Key-capable filters it out.
     private static var firstProjectCapableWindow: NSWindow? {
-        NSApp.windows.first { $0.canBecomeKey }
+        MainActor.assumeIsolated {
+            NSApp.windows.first { $0.canBecomeKey }
+        }
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
