@@ -2311,6 +2311,7 @@ final class TerminalSession: ObservableObject, Identifiable {
     private static let attentionObservationMaximumColumns = 512
     private static let contentFingerprintTailLineLimit = 40
     private static let summaryIdleInterval: TimeInterval = 2
+    private static let initialTitleMaximumIdleWait: TimeInterval = 3
     private static let summaryMaximumIdleWait: TimeInterval = 20
     private static let summaryTailLineLimit = 80
     private static let summaryMaximumCharacters = 6_000
@@ -4720,7 +4721,15 @@ final class TerminalSession: ObservableObject, Identifiable {
                     guard let self else { return 0.0 }
                     let latestOutputDate = self.lastSummaryOutputChangeDate ?? scheduledAt
                     let idleReadyDate = latestOutputDate.addingTimeInterval(Self.summaryIdleInterval)
-                    let maximumReadyDate = scheduledAt.addingTimeInterval(Self.summaryMaximumIdleWait)
+                    // A working TUI repaints continuously, so waiting for the
+                    // normal 20-second ceiling makes a brand-new row look stuck
+                    // on its generic tool name. The submitted prompt is already
+                    // enough to generate its first title; later summaries still
+                    // use the normal quiet/cadence behavior.
+                    let maximumIdleWait = self.needsInitialGeneratedTitle
+                        ? Self.initialTitleMaximumIdleWait
+                        : Self.summaryMaximumIdleWait
+                    let maximumReadyDate = scheduledAt.addingTimeInterval(maximumIdleWait)
                     let activityReadyDate = min(idleReadyDate, maximumReadyDate)
                     let readyDate = max(cadenceReadyDate, activityReadyDate)
                     return max(0, readyDate.timeIntervalSinceNow)
