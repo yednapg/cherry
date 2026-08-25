@@ -280,7 +280,6 @@ private final class SettingsNativeWindowChromeView: NSView {
         window.titlebarSeparatorStyle = .none
         window.styleMask.insert(.fullSizeContentView)
         window.toolbarStyle = .unified
-        window.toolbar?.showsBaselineSeparator = false
     }
 }
 
