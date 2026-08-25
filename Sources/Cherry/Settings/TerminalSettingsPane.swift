@@ -27,6 +27,12 @@ struct TerminalSettingsPane: View {
             }
 
             SettingsCard("Text") {
+                TerminalFontPicker(selection: $settings.fontFamily)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 13)
+
+                SettingsDivider()
+
                 SettingsSlider(
                     title: "Font size",
                     value: $settings.fontSize,
@@ -103,7 +109,7 @@ struct TerminalSettingsPane: View {
             }
 
             SettingsCard("Reset") {
-                SettingsRow("Terminal appearance", subtitle: "Restore default themes, font size, contrast, cursor, and sidebar display.") {
+                SettingsRow("Terminal appearance", subtitle: "Restore default themes, font family and size, contrast, cursor, and sidebar display.") {
                     Button("Reset") {
                         settings.resetTerminalAppearance()
                     }
@@ -117,6 +123,41 @@ struct TerminalSettingsPane: View {
         let directoryURL = TerminalAttentionStudy.recordingsDirectoryURL()
         try? TerminalAttentionStudy.prepareDirectoryIfNeeded(directoryURL)
         NSWorkspace.shared.activateFileViewerSelecting([directoryURL])
+    }
+}
+
+private struct TerminalFontPicker: View {
+    @Binding var selection: String
+
+    private let families = TerminalFontPalette.selectableFamilies
+
+    private var isSelectionAvailable: Bool {
+        families.contains {
+            $0.caseInsensitiveCompare(selection.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("Font")
+                .frame(width: 140, alignment: .leading)
+
+            Picker("Terminal font", selection: $selection) {
+                if !isSelectionAvailable {
+                    Text(selection.isEmpty ? "Menlo (default)" : "\(selection) (unavailable)")
+                        .tag(selection)
+                }
+
+                ForEach(families, id: \.self) { family in
+                    Text(TerminalFontPalette.displayName(for: family))
+                        .font(.custom(family, size: 13))
+                        .tag(family)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
     }
 }
 

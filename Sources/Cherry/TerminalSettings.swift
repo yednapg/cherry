@@ -97,6 +97,10 @@ final class TerminalSettings: ObservableObject {
         didSet { save(fontSize, forKey: Keys.fontSize) }
     }
 
+    @Published var fontFamily: String {
+        didSet { save(fontFamily, forKey: Keys.fontFamily) }
+    }
+
     @Published var cursorBlink: Bool {
         didSet { save(cursorBlink, forKey: Keys.cursorBlink) }
     }
@@ -160,6 +164,7 @@ final class TerminalSettings: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         fontSize = defaults.object(forKey: Keys.fontSize) as? Double ?? Defaults.fontSize
+        fontFamily = defaults.object(forKey: Keys.fontFamily) as? String ?? Defaults.fontFamily
         cursorBlink = defaults.object(forKey: Keys.cursorBlink) as? Bool ?? Defaults.cursorBlink
         minimumContrast = defaults.object(forKey: Keys.minimumContrast) as? Double ?? Defaults.minimumContrast
         sidebarBackgroundDepth = defaults.object(forKey: Keys.sidebarBackgroundDepth) as? Double
@@ -183,6 +188,7 @@ final class TerminalSettings: ObservableObject {
 
     func resetTerminalAppearance() {
         fontSize = Defaults.fontSize
+        fontFamily = Defaults.fontFamily
         cursorBlink = Defaults.cursorBlink
         minimumContrast = Defaults.minimumContrast
         sidebarBackgroundDepth = Defaults.sidebarBackgroundDepth
@@ -265,7 +271,12 @@ final class TerminalSettings: ObservableObject {
     }
 
     func ghosttyConfiguration() -> TerminalConfiguration {
-        Self.ghosttyConfiguration(
+        let fontFamily = TerminalFontPalette.effectiveFontFamily(
+            fontFamily,
+            availableFamilies: TerminalFontPalette.selectableFamilies
+        )
+        return Self.ghosttyConfiguration(
+            fontFamily: fontFamily,
             fontSize: fontSize,
             cursorBlink: cursorBlink,
             minimumContrast: minimumContrast
@@ -273,12 +284,13 @@ final class TerminalSettings: ObservableObject {
     }
 
     static func ghosttyConfiguration(
+        fontFamily: String,
         fontSize: Double,
         cursorBlink: Bool,
         minimumContrast: Double
     ) -> TerminalConfiguration {
         TerminalConfiguration { builder in
-            builder.withFontFamily("Menlo")
+            builder.withFontFamily(fontFamily)
             builder.withFontSize(Float(fontSize))
             builder.withCursorStyle(.bar)
             builder.withCursorStyleBlink(cursorBlink)
@@ -355,6 +367,7 @@ final class TerminalSettings: ObservableObject {
 
     private enum Defaults {
         static let fontSize = 14.0
+        static let fontFamily = TerminalFontPalette.defaultFamily
         static let cursorBlink = true
         static let minimumContrast = 1.15
         static let ghosttyScrollbackLimitBytes = 4_000_000
@@ -371,6 +384,7 @@ final class TerminalSettings: ObservableObject {
 
     private enum Keys {
         static let fontSize = "terminal.fontSize"
+        static let fontFamily = "terminal.fontFamily"
         static let cursorBlink = "terminal.cursorBlink"
         static let minimumContrast = "terminal.minimumContrast"
         static let sidebarBackgroundDepth = "sidebar.backgroundDepth"

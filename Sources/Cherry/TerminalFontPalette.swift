@@ -1,6 +1,14 @@
 import AppKit
 
 enum TerminalFontPalette {
+    static let defaultFamily = "Menlo"
+    static let ghosttyDefaultFamily = "JetBrains Mono"
+    static let macOSSystemFamily: String? = {
+        let family = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular).familyName
+        return family == defaultFamily ? nil : family
+    }()
+    static let selectableFamilies = selectableFontFamilies()
+
     private static let preferredNerdFamilies = [
         "Symbols Nerd Font Mono",
         "Symbols Nerd Font",
@@ -78,6 +86,48 @@ enum TerminalFontPalette {
         return selected
     }
 
+    static func selectableFontFamilies() -> [String] {
+        let installedFamilies = NSFontManager.shared.availableFontFamilies
+        let monospacedFamilies = installedFamilies.filter(isMonospacedFontFamily)
+        let detectedFamilies = selectableFontFamilies(
+            monospacedFamilies: monospacedFamilies,
+            installedFamilies: installedFamilies
+        )
+        let builtInFamilies = [ghosttyDefaultFamily] + [macOSSystemFamily].compactMap { $0 }
+        return sortedUniqueFamilies(builtInFamilies + detectedFamilies)
+    }
+
+    static func selectableFontFamilies(
+        monospacedFamilies: [String],
+        installedFamilies: [String]
+    ) -> [String] {
+        let nerdFamilies = preferredNerdFontFamilies(from: installedFamilies).filter {
+            !$0.localizedCaseInsensitiveContains("Symbols Nerd Font")
+        }
+        return sortedUniqueFamilies([defaultFamily] + monospacedFamilies + nerdFamilies)
+    }
+
+    static func displayName(for family: String) -> String {
+        if family.caseInsensitiveCompare(ghosttyDefaultFamily) == .orderedSame {
+            return "Ghostty Default (JetBrains Mono)"
+        }
+        if let macOSSystemFamily,
+           family.caseInsensitiveCompare(macOSSystemFamily) == .orderedSame {
+            return "macOS System Monospaced"
+        }
+        return family
+    }
+
+    static func effectiveFontFamily(
+        _ selectedFamily: String,
+        availableFamilies: [String]
+    ) -> String {
+        let trimmedFamily = selectedFamily.trimmingCharacters(in: .whitespacesAndNewlines)
+        return availableFamilies.first {
+            $0.caseInsensitiveCompare(trimmedFamily) == .orderedSame
+        } ?? defaultFamily
+    }
+
     private static func terminalFont(size: CGFloat, faces: [String]) -> NSFont {
         let nerdFamilies = preferredNerdFontFamilies(from: NSFontManager.shared.availableFontFamilies)
         let preferredFont = nerdFamilies
@@ -86,6 +136,36 @@ enum TerminalFontPalette {
             .first
         let baseFont = preferredFont ?? NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
         return addingNerdFallbacks(to: baseFont, families: nerdFamilies, size: size)
+    }
+
+    private static func sortedUniqueFamilies(_ candidates: [String]) -> [String] {
+        var families: [String] = []
+        var seen = Set<String>()
+
+        for family in candidates {
+            let key = family.lowercased()
+            guard seen.insert(key).inserted else { continue }
+            families.append(family)
+        }
+
+        return families.sorted {
+            let lhs = displayName(for: $0)
+            let rhs = displayName(for: $1)
+            let order = lhs.localizedCaseInsensitiveCompare(rhs)
+            return order == .orderedSame ? lhs < rhs : order == .orderedAscending
+        }
+    }
+
+    private static func isMonospacedFontFamily(_ family: String) -> Bool {
+        guard let members = NSFontManager.shared.availableMembers(ofFontFamily: family) else { return false }
+
+        return members.contains { member in
+            guard let fontName = member.first as? String,
+                  let font = NSFont(name: fontName, size: 14) else {
+                return false
+            }
+            return font.fontDescriptor.symbolicTraits.contains(.monoSpace)
+        }
     }
 
     private static func font(inFamily family: String, size: CGFloat, faces: [String]) -> NSFont? {

@@ -8533,6 +8533,24 @@ private func claudeAlternateScreenFrame(rows: [String]) -> Data {
 }
 
 @MainActor
+@Test func terminalSettingsPersistAndResetFontFamily() async throws {
+    let defaultsName = "CherryTests.TerminalFontSettings.\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: defaultsName))
+    defer {
+        defaults.removePersistentDomain(forName: defaultsName)
+    }
+
+    let settings = TerminalSettings(defaults: defaults)
+    #expect(settings.fontFamily == "Menlo")
+
+    settings.fontFamily = "PT Mono"
+    #expect(TerminalSettings(defaults: defaults).fontFamily == "PT Mono")
+
+    settings.resetTerminalAppearance()
+    #expect(settings.fontFamily == "Menlo")
+}
+
+@MainActor
 @Test func terminalSettingsPersistProjectColorDisplayMode() async throws {
     let defaultsName = "CherryTests.TerminalSettings.\(UUID().uuidString)"
     let defaults = try #require(UserDefaults(suiteName: defaultsName))
@@ -8568,6 +8586,7 @@ private func claudeAlternateScreenFrame(rows: [String]) -> Data {
 @MainActor
 @Test func terminalSettingsConfigureEmbeddedGhosttyTerminal() async throws {
     let configuration = TerminalSettings.ghosttyConfiguration(
+        fontFamily: "PT Mono",
         fontSize: 14,
         cursorBlink: true,
         minimumContrast: 1.15
@@ -8575,6 +8594,7 @@ private func claudeAlternateScreenFrame(rows: [String]) -> Data {
 
     #expect(configuration.rendered.contains("scrollback-limit = 4000000"))
     #expect(configuration.rendered.contains("cursor-style = bar"))
+    #expect(configuration.rendered.contains("font-family = PT Mono"))
 }
 
 @Test func sidebarThemeSampleContrastsTerminalBackgroundByAppearance() async throws {
@@ -11862,6 +11882,63 @@ private func serviceRecord(
         "CaskaydiaCove Nerd Font Mono",
         "Example Nerd Font"
     ])
+}
+
+@Test func selectableTerminalFontsCombineMonospacedAndNerdFamilies() async throws {
+    let families = TerminalFontPalette.selectableFontFamilies(
+        monospacedFamilies: ["PT Mono", "Menlo", "pt mono"],
+        installedFamilies: [
+            "Helvetica",
+            "Example Nerd Font",
+            "Symbols Nerd Font Mono",
+            "PT Mono",
+            "Menlo"
+        ]
+    )
+
+    #expect(families == ["Example Nerd Font", "Menlo", "PT Mono"])
+}
+
+@MainActor
+@Test func builtInTerminalFontsAreSelectableWithoutInstallation() async throws {
+    let macOSSystemFamily = try #require(TerminalFontPalette.macOSSystemFamily)
+
+    #expect(TerminalFontPalette.selectableFamilies.contains(TerminalFontPalette.ghosttyDefaultFamily))
+    #expect(TerminalFontPalette.selectableFamilies.contains(macOSSystemFamily))
+    #expect(TerminalFontPalette.displayName(for: TerminalFontPalette.ghosttyDefaultFamily)
+        == "Ghostty Default (JetBrains Mono)")
+    #expect(TerminalFontPalette.displayName(for: macOSSystemFamily) == "macOS System Monospaced")
+}
+
+@MainActor
+@Test func embeddedAndSystemTerminalFontsRenderInGhosttyConfiguration() async throws {
+    let macOSSystemFamily = try #require(TerminalFontPalette.macOSSystemFamily)
+    let ghosttyConfiguration = TerminalSettings.ghosttyConfiguration(
+        fontFamily: TerminalFontPalette.ghosttyDefaultFamily,
+        fontSize: 14,
+        cursorBlink: true,
+        minimumContrast: 1.15
+    )
+    let systemConfiguration = TerminalSettings.ghosttyConfiguration(
+        fontFamily: macOSSystemFamily,
+        fontSize: 14,
+        cursorBlink: true,
+        minimumContrast: 1.15
+    )
+
+    #expect(ghosttyConfiguration.rendered.contains("font-family = JetBrains Mono"))
+    #expect(systemConfiguration.rendered.contains("font-family = \(macOSSystemFamily)"))
+}
+
+@Test func unavailableTerminalFontFallsBackToMenlo() async throws {
+    #expect(TerminalFontPalette.effectiveFontFamily(
+        "pt mono",
+        availableFamilies: ["Menlo", "PT Mono"]
+    ) == "PT Mono")
+    #expect(TerminalFontPalette.effectiveFontFamily(
+        "Missing Font",
+        availableFamilies: ["Menlo", "PT Mono"]
+    ) == "Menlo")
 }
 
 @Test func alternateScreenScrollWheelProducesCursorKeys() async throws {
