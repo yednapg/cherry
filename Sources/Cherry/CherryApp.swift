@@ -154,7 +154,7 @@ final class CherryAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
 
 @main
 struct CherryApp: App {
-    private static let projectWindowSceneID = "project"
+    static let projectWindowSceneID = "project"
 
     @NSApplicationDelegateAdaptor(CherryAppDelegate.self) private var appDelegate
     @StateObject private var agentSettings = AgentSettings.shared
@@ -212,8 +212,10 @@ struct CherryApp: App {
     var body: some Scene {
         let _ = configureDefaultWindowOpener()
 
+        // Cmd-N opens this data-presenting scene without a value and should stay
+        // empty. Project-opening flows pass a root explicitly through openWindow.
         WindowGroup("Cherry", id: Self.projectWindowSceneID, for: String.self) { projectRoot in
-            ProjectWindowView(projectRoot: projectRoot.wrappedValue)
+            ProjectWindowView(initialProjectRoot: projectRoot.wrappedValue)
                 .onAppear {
                     guard controlServer == nil else { return }
                     let server = CherryControlServer(workspaceProvider: {
@@ -415,51 +417,33 @@ struct CherryApp: App {
 }
 
 private struct ProjectWindowView: View {
-    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var agentSettings = AgentSettings.shared
-    @State private var onboardedProjectRoot: String?
-    @State private var lockedProjectRoot: String?
+    @StateObject private var projectManager: ProjectWindowModel
+    @SceneStorage("sidebar.width") private var storedSidebarWidth: Double = 320
 
-    let requestedProjectRoot: String?
-
-    init(projectRoot: String?) {
-        requestedProjectRoot = projectRoot
+    init(initialProjectRoot: String?) {
+        _projectManager = StateObject(wrappedValue: ProjectWindowModel(
+            initialProjectRoot: initialProjectRoot
+        ))
     }
 
     var body: some View {
         Group {
-            if let projectRoot {
-                ProjectWorkspaceView(projectRoot: projectRoot)
-                    .id(projectRoot)
+            if let context = projectManager.activeContext {
+                ActiveProjectWorkspaceView(
+                    projectManager: projectManager,
+                    context: context,
+                    storedSidebarWidth: $storedSidebarWidth
+                )
+                .id(context.projectRoot)
             } else {
                 ProjectOnboardingView { project in
-                    onboardedProjectRoot = project.root
-                    lockedProjectRoot = project.root
+                    _ = projectManager.openProject(project)
                 }
             }
         }
-        .onAppear {
-            lockProjectRootIfNeeded()
-        }
+        .background(ProjectWindowBinder(projectManager: projectManager))
         .onOpenURL(perform: openDeepLink)
-    }
-
-    private var projectRoot: String? {
-        if let onboardedProjectRoot {
-            return onboardedProjectRoot
-        }
-        if let lockedProjectRoot {
-            return lockedProjectRoot
-        }
-        return agentSettings.projectRootForWindow(
-            requestedRoot: requestedProjectRoot,
-            onboardedRoot: onboardedProjectRoot
-        )
-    }
-
-    private func lockProjectRootIfNeeded() {
-        guard lockedProjectRoot == nil else { return }
-        lockedProjectRoot = projectRoot
     }
 
     private func openDeepLink(_ url: URL) {
@@ -477,16 +461,14 @@ private struct ProjectWindowView: View {
         case .note, .todo:
             shouldActivateWorktree = false
         }
-        if ProjectWindowRegistry.shared.focus(
+        guard projectManager.activate(
             projectRoot: projectRoot,
             activateWorktree: shouldActivateWorktree
-        ) {
-            if !ProjectWindowRegistry.shared.select(deepLink, projectRoot: projectRoot) {
-                CherryDeepLinkOpenQueue.shared.enqueue(deepLink, projectRoot: projectRoot)
-            }
-        } else {
+        ) != nil else {
+            return
+        }
+        if !ProjectWindowRegistry.shared.select(deepLink, projectRoot: projectRoot) {
             CherryDeepLinkOpenQueue.shared.enqueue(deepLink, projectRoot: projectRoot)
-            openWindow(value: projectRoot)
         }
     }
 }
@@ -526,24 +508,29 @@ private struct WindowTitleWriter: NSViewRepresentable {
     }
 }
 
-private struct ProjectWorkspaceView: View {
-    @Environment(\.openWindow) private var openWindow
+private struct ActiveProjectWorkspaceView: View {
     @ObservedObject private var agentSettings = AgentSettings.shared
     @ObservedObject private var terminalSettings = TerminalSettings.shared
-    @StateObject private var repository: RepositoryWorkspace
-    @StateObject private var chromeState = ProjectWindowChromeState()
-    @StateObject private var noteStore: ProjectNoteStore
-    @StateObject private var todoStore: ProjectTodoStore
-    @SceneStorage("sidebar.width") private var storedSidebarWidth: Double = 320
-    @State private var didAutoStartCommands = false
+    @ObservedObject var projectManager: ProjectWindowModel
+    let context: ProjectWorkspaceContext
+    @ObservedObject private var repository: RepositoryWorkspace
+    @ObservedObject private var chromeState: ProjectWindowChromeState
+    @ObservedObject private var noteStore: ProjectNoteStore
+    @ObservedObject private var todoStore: ProjectTodoStore
+    @Binding var storedSidebarWidth: Double
 
-    init(projectRoot: String) {
-        _repository = StateObject(wrappedValue: RepositoryWorkspace(projectRoot: projectRoot))
-        _noteStore = StateObject(wrappedValue: ProjectNoteStore(
-            projectRoot: projectRoot,
-            loadsInBackground: true
-        ))
-        _todoStore = StateObject(wrappedValue: ProjectTodoStore(projectRoot: projectRoot))
+    init(
+        projectManager: ProjectWindowModel,
+        context: ProjectWorkspaceContext,
+        storedSidebarWidth: Binding<Double>
+    ) {
+        self.projectManager = projectManager
+        self.context = context
+        _repository = ObservedObject(wrappedValue: context.repository)
+        _chromeState = ObservedObject(wrappedValue: projectManager.chromeState)
+        _noteStore = ObservedObject(wrappedValue: context.noteStore)
+        _todoStore = ObservedObject(wrappedValue: context.todoStore)
+        _storedSidebarWidth = storedSidebarWidth
     }
 
     /// Folder name of the project, or "Cherry" for a project-less window.
@@ -573,19 +560,12 @@ private struct ProjectWorkspaceView: View {
             todoStore: todoStore,
             projectRoot: workspace.projectRoot,
             openProject: openProject,
+            projectManager: projectManager,
             isSidebarHidden: $chromeState.isSidebarHidden,
             isSidebarRevealed: $chromeState.isSidebarRevealed,
             isCursorOverSidebar: $chromeState.isCursorOverSidebar,
             storedSidebarWidth: $storedSidebarWidth
         )
-        .background(ProjectWindowBinder(
-            projectRoot: repository.repositoryRoot,
-            workspace: workspace,
-            repository: repository,
-            noteStore: noteStore,
-            todoStore: todoStore,
-            chromeState: chromeState
-        ))
         .background {
             if let session = workspace.selectedSession {
                 WindowTitleBinder(projectName: workspaceTitle, session: session)
@@ -596,19 +576,12 @@ private struct ProjectWorkspaceView: View {
         .focusedValue(\.terminalWorkspace, workspace)
         .focusedValue(\.projectWindowChromeState, chromeState)
         .onAppear {
-            ProjectWindowRegistry.shared.activeWorkspace = workspace
-            ProjectWindowRegistry.shared.activeNoteStore = noteStore
-            ProjectWindowRegistry.shared.activeTodoStore = todoStore
-            ProjectWindowRegistry.shared.activeChromeState = chromeState
+            ProjectWindowRegistry.shared.projectManagerDidActivate(projectManager)
             if Self.isAgentTreePreviewEnabled {
                 _ = workspace.installPreviewAgentTree()
             }
-            agentSettings.markProjectOpened(workspace.projectRoot)
-            autoStartCommandsIfNeeded()
+            context.startIfNeeded()
             openPendingDeepLinks()
-            Task {
-                await repository.refresh()
-            }
         }
         .onChange(of: repository.activeWorktreeRoot) { _, _ in
             // RepositoryWorkspace synchronously updates the window registry as
@@ -641,17 +614,7 @@ private struct ProjectWorkspaceView: View {
     }
 
     private func openProject(_ project: CherryProject) {
-        agentSettings.markProjectOpened(project.root)
-        guard !ProjectWindowRegistry.shared.focus(projectRoot: project.root) else { return }
-        openWindow(value: project.root)
-    }
-
-    private func autoStartCommandsIfNeeded() {
-        guard !didAutoStartCommands, let projectRoot = workspace.projectRoot else { return }
-        didAutoStartCommands = true
-        for command in agentSettings.launchableProjectCommands(for: projectRoot) where command.autoStart {
-            workspace.addCommandSession(command: command, projectRoot: projectRoot, select: false)
-        }
+        _ = projectManager.openProject(project)
     }
 
     private func openPendingDeepLinks() {

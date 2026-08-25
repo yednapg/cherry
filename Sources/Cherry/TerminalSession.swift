@@ -1080,6 +1080,10 @@ final class TerminalWorkspace: ObservableObject {
     let projectRoot: String?
     private let launchBackend: TerminalSessionLaunchBackend
 
+#if DEBUG
+    var hiddenAgentSummarySchedulingObserverForTesting: (() -> Void)?
+#endif
+
     init(
         projectRoot: String? = nil,
         createInitialSession: Bool = true,
@@ -1118,6 +1122,9 @@ final class TerminalWorkspace: ObservableObject {
     }
 
     func scheduleHiddenAgentSummaries() {
+#if DEBUG
+        hiddenAgentSummarySchedulingObserverForTesting?()
+#endif
         agentSessions.forEach { $0.scheduleSummaryWhenHiddenIfNeeded() }
     }
 

@@ -25,6 +25,7 @@ struct ContentView: View {
     @ObservedObject var todoStore: ProjectTodoStore
     let projectRoot: String?
     let openProject: (CherryProject) -> Void
+    var projectManager: ProjectWindowModel? = nil
     @Binding var isSidebarHidden: Bool
     @Binding var isSidebarRevealed: Bool
     @Binding var isCursorOverSidebar: Bool
@@ -435,6 +436,7 @@ struct ContentView: View {
             projectRoot: projectRoot,
             presentation: .docked,
             openProject: openProject,
+            projectManager: projectManager,
             swipeState: worktreeSwipeState,
             sidebarWidth: sidebarWidth
         )
@@ -489,6 +491,7 @@ struct ContentView: View {
             projectRoot: projectRoot,
             presentation: .floating,
             openProject: openProject,
+            projectManager: projectManager,
             swipeState: worktreeSwipeState,
             sidebarWidth: sidebarWidth
         )
@@ -4528,6 +4531,12 @@ private enum SidebarLayout {
     static let trailingInset: CGFloat = 8
     static let rowHorizontalInset: CGFloat = 12
     static let agentTreeRowSpacing: CGFloat = 4
+    static let projectGroupSpacing: CGFloat = 5
+    static let itemRowSpacing: CGFloat = 2
+    static let singleLineItemRowHeight: CGFloat = 42
+    static let selectionBackgroundHorizontalInset: CGFloat = 3
+    static let selectionBackgroundVerticalInset: CGFloat = 3
+    static let selectionBackgroundCornerRadius: CGFloat = 10
 }
 
 private enum TrafficLightLayout {
@@ -4709,6 +4718,7 @@ private struct SidebarTabsView: View {
     let projectRoot: String?
     let presentation: SidebarPresentation
     let openProject: (CherryProject) -> Void
+    let projectManager: ProjectWindowModel?
     @ObservedObject var swipeState: WorktreeSidebarSwipeState
     let sidebarWidth: CGFloat
 
@@ -4724,7 +4734,8 @@ private struct SidebarTabsView: View {
                         todoStore: todoStore,
                         projectRoot: targetRoot,
                         presentation: presentation,
-                        openProject: openProject
+                        openProject: openProject,
+                        projectManager: projectManager
                     )
                     .equatable()
                     .offset(x: targetPageOffset)
@@ -4738,7 +4749,8 @@ private struct SidebarTabsView: View {
                     todoStore: todoStore,
                     projectRoot: displayedSourceRoot,
                     presentation: presentation,
-                    openProject: openProject
+                    openProject: openProject,
+                    projectManager: projectManager
                 )
                 .equatable()
                 .offset(x: swipeState.offset)
@@ -4765,6 +4777,16 @@ private struct SidebarTabsView: View {
         }
         .overlay(alignment: .top) {
             SidebarTopChromeShield(projectRoot: repository.repositoryRoot, presentation: presentation)
+        }
+        .overlay(alignment: .topTrailing) {
+            if projectManager != nil {
+                SidebarUniversalProjectAddButton(
+                    projectRoot: repository.repositoryRoot,
+                    presentation: presentation
+                )
+                .padding(.top, 10)
+                .padding(.trailing, SidebarLayout.trailingInset)
+            }
         }
     }
 
@@ -4796,6 +4818,50 @@ private struct SidebarTabsView: View {
     }
 }
 
+private struct SidebarUniversalProjectAddButton: View {
+    @Environment(\.colorScheme) private var colorScheme
+    @ObservedObject private var settings = AgentSettings.shared
+    @ObservedObject private var terminalSettings = TerminalSettings.shared
+
+    let projectRoot: String?
+    let presentation: SidebarPresentation
+
+    var body: some View {
+        Button(action: chooseProjectRoot) {
+            Image(systemName: "plus")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(palette.rowText)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Add project")
+        .accessibilityLabel("Add Project")
+    }
+
+    private var palette: SidebarPalette {
+        SidebarPalette(
+            themeColors: terminalSettings.ghosttyThemeColors(for: colorScheme),
+            fallbackColorScheme: colorScheme,
+            sidebarBackgroundDepth: terminalSettings.sidebarBackgroundDepth,
+            projectColor: settings.projectAppearance(for: projectRoot).color,
+            projectColorDisplayMode: terminalSettings.projectColorDisplayMode,
+            presentation: presentation
+        )
+    }
+
+    private func chooseProjectRoot() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Add"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        settings.addProject(path: url.path)
+    }
+}
+
 /// Swipe progress changes on every trackpad event. Giving the heavyweight page
 /// an explicit identity boundary lets SwiftUI update its offset without walking
 /// the entire sidebar contents again; the observed models inside the page still
@@ -4809,6 +4875,7 @@ private struct EquatableSidebarTabsPage: View, @preconcurrency Equatable {
     let projectRoot: String?
     let presentation: SidebarPresentation
     let openProject: (CherryProject) -> Void
+    let projectManager: ProjectWindowModel?
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.workspace === rhs.workspace
@@ -4817,6 +4884,7 @@ private struct EquatableSidebarTabsPage: View, @preconcurrency Equatable {
             && lhs.todoStore === rhs.todoStore
             && lhs.projectRoot == rhs.projectRoot
             && lhs.presentation == rhs.presentation
+            && lhs.projectManager === rhs.projectManager
     }
 
     var body: some View {
@@ -4827,7 +4895,8 @@ private struct EquatableSidebarTabsPage: View, @preconcurrency Equatable {
             todoStore: todoStore,
             projectRoot: projectRoot,
             presentation: presentation,
-            openProject: openProject
+            openProject: openProject,
+            projectManager: projectManager
         )
     }
 }
@@ -4844,6 +4913,7 @@ private struct SidebarTabsPage: View {
     let projectRoot: String?
     let presentation: SidebarPresentation
     let openProject: (CherryProject) -> Void
+    let projectManager: ProjectWindowModel?
 
     var body: some View {
         let features = agentSettings.projectFeatures(for: projectRoot)
@@ -4862,47 +4932,93 @@ private struct SidebarTabsPage: View {
         )
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
-                SidebarAgentSessionSection(
-                    settings: agentSettings,
-                    workspace: workspace,
-                    chromeState: chromeState,
-                    projectRoot: projectRoot,
-                    presentation: presentation,
-                    palette: palette,
-                    agentTree: agentTree,
-                    visibleAgentItems: visibleAgentItems,
-                    pathDisplayMode: terminalSettings.sidebarTerminalPathDisplayMode,
-                    showShortcutHints: chromeState.isCommandKeyPressed,
-                    openSettings: { openSettings() }
-                )
-                .id("agents-\(projectRoot ?? "")")
+                if let projectManager {
+                    SidebarProjectAgentGroups(
+                        settings: agentSettings,
+                        projectManager: projectManager,
+                        chromeState: chromeState,
+                        presentation: presentation,
+                        palette: palette,
+                        pathDisplayMode: terminalSettings.sidebarTerminalPathDisplayMode,
+                        showShortcutHints: chromeState.isCommandKeyPressed,
+                        openSettings: { openSettings() }
+                    )
 
-                SidebarSessionSection(
-                    title: "Terminals",
-                    displayItems: workspace.terminalDisplayItems,
-                    workspace: workspace,
-                    chromeState: chromeState,
-                    projectRoot: projectRoot,
-                    presentation: presentation,
-                    palette: palette,
-                    pathDisplayMode: terminalSettings.sidebarTerminalPathDisplayMode,
-                    shortcutStartIndex: visibleAgentItems.count,
-                    showShortcutHints: chromeState.isCommandKeyPressed
-                )
-                .id("terminals-\(projectRoot ?? "")")
+                    SidebarProjectTerminalGroups(
+                        settings: agentSettings,
+                        projectManager: projectManager,
+                        chromeState: chromeState,
+                        presentation: presentation,
+                        palette: palette,
+                        pathDisplayMode: terminalSettings.sidebarTerminalPathDisplayMode,
+                        activeShortcutStartIndex: visibleAgentItems.count,
+                        showShortcutHints: chromeState.isCommandKeyPressed
+                    )
 
-                SidebarCommandSection(
-                    settings: agentSettings,
-                    workspace: workspace,
-                    chromeState: chromeState,
-                    projectRoot: projectRoot,
-                    presentation: presentation,
-                    palette: palette,
-                    commands: commands,
-                    shortcutStartIndex: visibleAgentItems.count + workspace.terminalDisplayItems.count,
-                    showShortcutHints: chromeState.isCommandKeyPressed
-                )
-                .id("commands-\(projectRoot ?? "")")
+                    SidebarProjectCommandGroups(
+                        settings: agentSettings,
+                        projectManager: projectManager,
+                        chromeState: chromeState,
+                        presentation: presentation,
+                        palette: palette,
+                        activeShortcutStartIndex: visibleAgentItems.count
+                            + workspace.terminalDisplayItems.count,
+                        showShortcutHints: chromeState.isCommandKeyPressed
+                    )
+                } else {
+                    SidebarAgentSessionSection(
+                        settings: agentSettings,
+                        workspace: workspace,
+                        chromeState: chromeState,
+                        projectRoot: projectRoot,
+                        presentation: presentation,
+                        palette: palette,
+                        agentTree: agentTree,
+                        visibleAgentItems: visibleAgentItems,
+                        pathDisplayMode: terminalSettings.sidebarTerminalPathDisplayMode,
+                        showShortcutHints: chromeState.isCommandKeyPressed,
+                        openSettings: { openSettings() },
+                        showsHeader: true,
+                        isProjectActive: true,
+                        activateProject: {}
+                    )
+                    .id("agents-\(projectRoot ?? "")")
+
+                    SidebarSessionSection(
+                        title: "Terminals",
+                        displayItems: workspace.terminalDisplayItems,
+                        workspace: workspace,
+                        chromeState: chromeState,
+                        projectRoot: projectRoot,
+                        presentation: presentation,
+                        palette: palette,
+                        pathDisplayMode: terminalSettings.sidebarTerminalPathDisplayMode,
+                        shortcutStartIndex: visibleAgentItems.count,
+                        showShortcutHints: chromeState.isCommandKeyPressed,
+                        showsHeader: true,
+                        isProjectActive: true,
+                        activateProject: {}
+                    )
+                    .id("terminals-\(projectRoot ?? "")")
+
+                    SidebarCommandSection(
+                        settings: agentSettings,
+                        workspace: workspace,
+                        chromeState: chromeState,
+                        projectRoot: projectRoot,
+                        presentation: presentation,
+                        palette: palette,
+                        commands: commands,
+                        shortcutStartIndex: visibleAgentItems.count + workspace.terminalDisplayItems.count,
+                        showShortcutHints: chromeState.isCommandKeyPressed,
+                        showsHeader: true,
+                        isProjectActive: true,
+                        activateProject: {},
+                        addRequest: 0,
+                        consumeAddRequest: { false }
+                    )
+                    .id("commands-\(projectRoot ?? "")")
+                }
 
                 if features.todosEnabled {
                     SidebarTodosSection(
@@ -5117,13 +5233,6 @@ private struct TitlebarProjectPicker: View {
 
         menu.addItem(.separator())
 
-        let addItem = NSMenuItem(title: "Add Project...", action: nil, keyEquivalent: "")
-        let addTarget = TitlebarProjectMenuTarget(chooseProjectRoot)
-        targets.append(addTarget)
-        addItem.target = addTarget
-        addItem.action = #selector(TitlebarProjectMenuTarget.invoke)
-        menu.addItem(addItem)
-
         let editItem = NSMenuItem(title: "Edit Projects...", action: nil, keyEquivalent: "")
         let editTarget = TitlebarProjectMenuTarget(openSettings)
         targets.append(editTarget)
@@ -5147,20 +5256,6 @@ private struct TitlebarProjectPicker: View {
         }
 
         _ = targets
-    }
-
-    private func chooseProjectRoot() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.prompt = "Add"
-
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        settings.addProject(path: url.path)
-        if let project = settings.selectedProject(for: url.path) {
-            openProject(project)
-        }
     }
 
     private var selectedProject: CherryProject? {
@@ -5328,6 +5423,722 @@ extension NSUserInterfaceItemIdentifier {
     )
 }
 
+@MainActor
+private enum SidebarProjectGroupCollection {
+    static func projects(
+        settings: AgentSettings,
+        projectManager: ProjectWindowModel,
+        in section: ProjectSidebarSection
+    ) -> [CherryProject] {
+        var projects = settings.projects
+        var roots = Set(projects.map(\.root))
+        for root in projectManager.loadedProjectRoots where roots.insert(root).inserted {
+            projects.append(CherryProject(root: root))
+        }
+        if let activeProjectRoot = projectManager.activeProjectRoot,
+           roots.insert(activeProjectRoot).inserted {
+            projects.insert(CherryProject(root: activeProjectRoot), at: 0)
+        }
+        return projects.filter { settings.isProjectVisible($0, in: section) }
+    }
+}
+
+private struct SidebarProjectAgentGroups: View {
+    @ObservedObject var settings: AgentSettings
+    @ObservedObject var projectManager: ProjectWindowModel
+    @ObservedObject var chromeState: ProjectWindowChromeState
+    let presentation: SidebarPresentation
+    let palette: SidebarPalette
+    let pathDisplayMode: SidebarTerminalPathDisplayMode
+    let showShortcutHints: Bool
+    let openSettings: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            SidebarSectionHeader(title: "Agents", count: nil, palette: palette)
+
+            ForEach(projects) { project in
+                if let context = projectManager.context(for: project.root) {
+                    SidebarAgentProjectGroup(
+                        settings: settings,
+                        projectManager: projectManager,
+                        chromeState: chromeState,
+                        project: project,
+                        context: context,
+                        presentation: presentation,
+                        palette: palette,
+                        pathDisplayMode: pathDisplayMode,
+                        showShortcutHints: showShortcutHints,
+                        openSettings: openSettings
+                    )
+                } else {
+                    unloadedProjectHeader(project, section: .agents)
+                }
+            }
+        }
+    }
+
+    private var projects: [CherryProject] {
+        SidebarProjectGroupCollection.projects(
+            settings: settings,
+            projectManager: projectManager,
+            in: .agents
+        )
+    }
+
+    private func launch(_ agent: ResolvedAgentTool, in project: CherryProject) {
+        guard agent.isLaunchable,
+              let root = settings.resolvedProject(for: project.root).validProjectRoot,
+              let context = projectManager.loadProject(project)
+        else { return }
+        _ = projectManager.openProject(project)
+        projectManager.setProjectExpanded(true, projectRoot: project.root, in: .agents)
+        chromeState.selectTerminal()
+        context.workspace.addAgentSession(agent: agent.definition, projectRoot: root)
+    }
+
+    private func unloadedProjectHeader(
+        _ project: CherryProject,
+        section: ProjectSidebarSection
+    ) -> some View {
+        SidebarProjectGroupHeader(
+            project: project,
+            context: nil,
+            isExpanded: projectManager.isProjectExpanded(project.root, in: section),
+            isSelected: false,
+            count: 0,
+            palette: palette,
+            section: section,
+            projectManager: projectManager,
+            onToggle: { toggleSidebarProject(project, in: section, projectManager: projectManager) },
+            accessory: .agentMenu(
+                project: settings.resolvedProject(for: project.root),
+                help: "New agent in \(project.name)",
+                openSettings: openSettings,
+                launch: { launch($0, in: project) }
+            )
+        )
+    }
+}
+
+private struct SidebarAgentProjectGroup: View {
+    @ObservedObject var settings: AgentSettings
+    @ObservedObject var projectManager: ProjectWindowModel
+    @ObservedObject var chromeState: ProjectWindowChromeState
+    let project: CherryProject
+    let context: ProjectWorkspaceContext
+    @ObservedObject private var workspace: TerminalWorkspace
+    let presentation: SidebarPresentation
+    let palette: SidebarPalette
+    let pathDisplayMode: SidebarTerminalPathDisplayMode
+    let showShortcutHints: Bool
+    let openSettings: () -> Void
+
+    init(
+        settings: AgentSettings,
+        projectManager: ProjectWindowModel,
+        chromeState: ProjectWindowChromeState,
+        project: CherryProject,
+        context: ProjectWorkspaceContext,
+        presentation: SidebarPresentation,
+        palette: SidebarPalette,
+        pathDisplayMode: SidebarTerminalPathDisplayMode,
+        showShortcutHints: Bool,
+        openSettings: @escaping () -> Void
+    ) {
+        self.settings = settings
+        self.projectManager = projectManager
+        self.chromeState = chromeState
+        self.project = project
+        self.context = context
+        _workspace = ObservedObject(wrappedValue: context.workspace)
+        self.presentation = presentation
+        self.palette = palette
+        self.pathDisplayMode = pathDisplayMode
+        self.showShortcutHints = showShortcutHints
+        self.openSettings = openSettings
+    }
+
+    var body: some View {
+        let agentTree = workspace.agentSessionTreeSnapshot()
+        let visibleItems = agentTree.visibleItems(collapsedIDs: chromeState.collapsedAgentGroupIDs)
+        let isActive = projectManager.activeContext === context
+        let isSelected = isActive
+            && chromeState.isShowingTerminalContent
+            && workspace.selectedSession?.kind == .agent
+        let isExpanded = projectManager.isProjectExpanded(project.root, in: .agents)
+
+        VStack(alignment: .leading, spacing: SidebarLayout.projectGroupSpacing) {
+            SidebarProjectGroupHeader(
+                project: project,
+                context: context,
+                isExpanded: isExpanded,
+                isSelected: isSelected,
+                count: agentTree.sessions.count,
+                palette: palette,
+                section: .agents,
+                projectManager: projectManager,
+                onToggle: {
+                    projectManager.toggleProjectExpanded(project.root, in: .agents)
+                },
+                accessory: .agentMenu(
+                    project: settings.resolvedProject(for: workspace.projectRoot),
+                    help: "New agent in \(project.name)",
+                    openSettings: openSettings,
+                    launch: launch
+                )
+            )
+
+            if isExpanded {
+                SidebarAgentSessionSection(
+                    settings: settings,
+                    workspace: workspace,
+                    chromeState: chromeState,
+                    projectRoot: workspace.projectRoot,
+                    presentation: presentation,
+                    palette: palette,
+                    agentTree: agentTree,
+                    visibleAgentItems: visibleItems,
+                    pathDisplayMode: pathDisplayMode,
+                    showShortcutHints: isActive && showShortcutHints,
+                    openSettings: openSettings,
+                    showsHeader: false,
+                    isProjectActive: isActive,
+                    activateProject: activateProject
+                )
+                .padding(.leading, 14)
+            }
+        }
+    }
+
+    private func activateProject() {
+        _ = projectManager.openProject(project)
+    }
+
+    private func launch(_ agent: ResolvedAgentTool) {
+        let resolvedProject = settings.resolvedProject(for: workspace.projectRoot)
+        guard agent.isLaunchable, let root = resolvedProject.validProjectRoot else { return }
+        activateProject()
+        projectManager.setProjectExpanded(true, projectRoot: project.root, in: .agents)
+        chromeState.selectTerminal()
+        workspace.addAgentSession(agent: agent.definition, projectRoot: root)
+    }
+}
+
+private struct SidebarProjectTerminalGroups: View {
+    @ObservedObject var settings: AgentSettings
+    @ObservedObject var projectManager: ProjectWindowModel
+    @ObservedObject var chromeState: ProjectWindowChromeState
+    let presentation: SidebarPresentation
+    let palette: SidebarPalette
+    let pathDisplayMode: SidebarTerminalPathDisplayMode
+    let activeShortcutStartIndex: Int
+    let showShortcutHints: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            SidebarSectionHeader(title: "Terminals", count: nil, palette: palette)
+
+            ForEach(projects) { project in
+                if let context = projectManager.context(for: project.root) {
+                    SidebarTerminalProjectGroup(
+                        projectManager: projectManager,
+                        chromeState: chromeState,
+                        project: project,
+                        context: context,
+                        presentation: presentation,
+                        palette: palette,
+                        pathDisplayMode: pathDisplayMode,
+                        activeShortcutStartIndex: activeShortcutStartIndex,
+                        showShortcutHints: showShortcutHints
+                    )
+                } else {
+                    SidebarProjectGroupHeader(
+                        project: project,
+                        context: nil,
+                        isExpanded: projectManager.isProjectExpanded(project.root, in: .terminals),
+                        isSelected: false,
+                        count: 0,
+                        palette: palette,
+                        section: .terminals,
+                        projectManager: projectManager,
+                        onToggle: {
+                            toggleSidebarProject(project, in: .terminals, projectManager: projectManager)
+                        },
+                        accessory: nil
+                    )
+                }
+            }
+        }
+    }
+
+    private var projects: [CherryProject] {
+        SidebarProjectGroupCollection.projects(
+            settings: settings,
+            projectManager: projectManager,
+            in: .terminals
+        )
+    }
+
+}
+
+private struct SidebarTerminalProjectGroup: View {
+    @ObservedObject var projectManager: ProjectWindowModel
+    @ObservedObject var chromeState: ProjectWindowChromeState
+    let project: CherryProject
+    let context: ProjectWorkspaceContext
+    @ObservedObject private var workspace: TerminalWorkspace
+    let presentation: SidebarPresentation
+    let palette: SidebarPalette
+    let pathDisplayMode: SidebarTerminalPathDisplayMode
+    let activeShortcutStartIndex: Int
+    let showShortcutHints: Bool
+
+    init(
+        projectManager: ProjectWindowModel,
+        chromeState: ProjectWindowChromeState,
+        project: CherryProject,
+        context: ProjectWorkspaceContext,
+        presentation: SidebarPresentation,
+        palette: SidebarPalette,
+        pathDisplayMode: SidebarTerminalPathDisplayMode,
+        activeShortcutStartIndex: Int,
+        showShortcutHints: Bool
+    ) {
+        self.projectManager = projectManager
+        self.chromeState = chromeState
+        self.project = project
+        self.context = context
+        _workspace = ObservedObject(wrappedValue: context.workspace)
+        self.presentation = presentation
+        self.palette = palette
+        self.pathDisplayMode = pathDisplayMode
+        self.activeShortcutStartIndex = activeShortcutStartIndex
+        self.showShortcutHints = showShortcutHints
+    }
+
+    var body: some View {
+        let isActive = projectManager.activeContext === context
+        let isSelected = isActive
+            && chromeState.isShowingTerminalContent
+            && workspace.selectedSession?.kind == .terminal
+        let isExpanded = projectManager.isProjectExpanded(project.root, in: .terminals)
+
+        VStack(alignment: .leading, spacing: SidebarLayout.projectGroupSpacing) {
+            SidebarProjectGroupHeader(
+                project: project,
+                context: context,
+                isExpanded: isExpanded,
+                isSelected: isSelected,
+                count: workspace.terminalDisplayItems.count,
+                palette: palette,
+                section: .terminals,
+                projectManager: projectManager,
+                onToggle: {
+                    projectManager.toggleProjectExpanded(project.root, in: .terminals)
+                },
+                accessory: nil
+            )
+
+            if isExpanded {
+                SidebarSessionSection(
+                    title: "Terminals",
+                    displayItems: workspace.terminalDisplayItems,
+                    workspace: workspace,
+                    chromeState: chromeState,
+                    projectRoot: workspace.projectRoot,
+                    presentation: presentation,
+                    palette: palette,
+                    pathDisplayMode: pathDisplayMode,
+                    shortcutStartIndex: isActive ? activeShortcutStartIndex : 0,
+                    showShortcutHints: isActive && showShortcutHints,
+                    showsHeader: false,
+                    isProjectActive: isActive,
+                    activateProject: activateProject
+                )
+                .padding(.leading, 14)
+            }
+        }
+    }
+
+    private func activateProject() {
+        _ = projectManager.openProject(project)
+    }
+
+}
+
+private struct SidebarProjectCommandGroups: View {
+    @ObservedObject var settings: AgentSettings
+    @ObservedObject var projectManager: ProjectWindowModel
+    @ObservedObject var chromeState: ProjectWindowChromeState
+    let presentation: SidebarPresentation
+    let palette: SidebarPalette
+    let activeShortcutStartIndex: Int
+    let showShortcutHints: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            SidebarSectionHeader(title: "Commands", count: nil, palette: palette)
+
+            ForEach(projects) { project in
+                if let context = projectManager.context(for: project.root) {
+                    SidebarCommandProjectGroup(
+                        settings: settings,
+                        projectManager: projectManager,
+                        chromeState: chromeState,
+                        project: project,
+                        context: context,
+                        presentation: presentation,
+                        palette: palette,
+                        activeShortcutStartIndex: activeShortcutStartIndex,
+                        showShortcutHints: showShortcutHints
+                    )
+                } else {
+                    SidebarProjectGroupHeader(
+                        project: project,
+                        context: nil,
+                        isExpanded: projectManager.isProjectExpanded(project.root, in: .commands),
+                        isSelected: false,
+                        count: 0,
+                        palette: palette,
+                        section: .commands,
+                        projectManager: projectManager,
+                        onToggle: {
+                            toggleSidebarProject(project, in: .commands, projectManager: projectManager)
+                        },
+                        accessory: .add(
+                            help: "New command in \(project.name)",
+                            action: { projectManager.requestNewCommand(in: project) }
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    private var projects: [CherryProject] {
+        SidebarProjectGroupCollection.projects(
+            settings: settings,
+            projectManager: projectManager,
+            in: .commands
+        )
+    }
+}
+
+private struct SidebarCommandProjectGroup: View {
+    @ObservedObject var settings: AgentSettings
+    @ObservedObject var projectManager: ProjectWindowModel
+    @ObservedObject var chromeState: ProjectWindowChromeState
+    let project: CherryProject
+    let context: ProjectWorkspaceContext
+    @ObservedObject private var workspace: TerminalWorkspace
+    let presentation: SidebarPresentation
+    let palette: SidebarPalette
+    let activeShortcutStartIndex: Int
+    let showShortcutHints: Bool
+
+    init(
+        settings: AgentSettings,
+        projectManager: ProjectWindowModel,
+        chromeState: ProjectWindowChromeState,
+        project: CherryProject,
+        context: ProjectWorkspaceContext,
+        presentation: SidebarPresentation,
+        palette: SidebarPalette,
+        activeShortcutStartIndex: Int,
+        showShortcutHints: Bool
+    ) {
+        self.settings = settings
+        self.projectManager = projectManager
+        self.chromeState = chromeState
+        self.project = project
+        self.context = context
+        _workspace = ObservedObject(wrappedValue: context.workspace)
+        self.presentation = presentation
+        self.palette = palette
+        self.activeShortcutStartIndex = activeShortcutStartIndex
+        self.showShortcutHints = showShortcutHints
+    }
+
+    var body: some View {
+        let commands = settings.launchableProjectCommands(for: workspace.projectRoot)
+        let isActive = projectManager.activeContext === context
+        let isSelected = isActive && (
+            chromeState.focusedIdleCommandName != nil
+                || (chromeState.isShowingTerminalContent
+                    && workspace.selectedSession?.kind == .command)
+        )
+        let isExpanded = projectManager.isProjectExpanded(project.root, in: .commands)
+        let addRequest = projectManager.commandAddRequestRevision
+
+        VStack(alignment: .leading, spacing: SidebarLayout.projectGroupSpacing) {
+            SidebarProjectGroupHeader(
+                project: project,
+                context: context,
+                isExpanded: isExpanded,
+                isSelected: isSelected,
+                count: commands.count,
+                palette: palette,
+                section: .commands,
+                projectManager: projectManager,
+                onToggle: {
+                    projectManager.toggleProjectExpanded(project.root, in: .commands)
+                },
+                accessory: .add(
+                    help: "New command in \(project.name)",
+                    action: { projectManager.requestNewCommand(in: project) }
+                )
+            )
+
+            if isExpanded {
+                SidebarCommandSection(
+                    settings: settings,
+                    workspace: workspace,
+                    chromeState: chromeState,
+                    projectRoot: workspace.projectRoot,
+                    presentation: presentation,
+                    palette: palette,
+                    commands: commands,
+                    shortcutStartIndex: isActive ? activeShortcutStartIndex : 0,
+                    showShortcutHints: isActive && showShortcutHints,
+                    showsHeader: false,
+                    isProjectActive: isActive,
+                    activateProject: activateProject,
+                    addRequest: addRequest,
+                    consumeAddRequest: {
+                        projectManager.consumeNewCommandRequest(projectRoot: project.root)
+                    }
+                )
+                .padding(.leading, 14)
+            }
+        }
+    }
+
+    private func activateProject() {
+        _ = projectManager.openProject(project)
+    }
+}
+
+private enum SidebarProjectGroupAccessory {
+    case add(help: String, action: () -> Void)
+    case agentMenu(
+        project: ResolvedAgentProject,
+        help: String,
+        openSettings: () -> Void,
+        launch: (ResolvedAgentTool) -> Void
+    )
+}
+
+private struct SidebarProjectGroupHeader: View {
+    @ObservedObject private var settings = AgentSettings.shared
+
+    let project: CherryProject
+    let context: ProjectWorkspaceContext?
+    let isExpanded: Bool
+    let isSelected: Bool
+    let count: Int
+    let palette: SidebarPalette
+    let section: ProjectSidebarSection
+    @ObservedObject var projectManager: ProjectWindowModel
+    let onToggle: () -> Void
+    let accessory: SidebarProjectGroupAccessory?
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Button(action: onToggle) {
+                HStack(spacing: 7) {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                        .frame(width: 11, height: 18)
+
+                    Circle()
+                        .fill(projectColor)
+                        .frame(width: 6, height: 6)
+                        .overlay {
+                            if context == nil {
+                                Circle()
+                                    .strokeBorder(palette.headerText.opacity(0.5), lineWidth: 1)
+                            }
+                        }
+
+                    Text(project.name)
+                        .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(
+                            isSelected ? palette.selectedText : palette.rowText.opacity(0.82)
+                        )
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Spacer(minLength: 5)
+
+                    if section.showsProjectActivityIndicator, let context {
+                        ProjectActivityIndicator(activity: context.activity)
+                    }
+
+                    if count >= 1 {
+                        Text("\(count)")
+                            .font(.system(size: 11, weight: .medium))
+                            .monospacedDigit()
+                            .foregroundStyle(palette.headerText.opacity(0.7))
+                    }
+                }
+                .foregroundStyle(palette.rowText.opacity(0.82))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 28)
+                .padding(.leading, 5)
+                // The accessory owns a 24pt hit target with its glyph centered
+                // inside it. Let that target supply the trailing visual inset;
+                // adding this padding as well made the activity/count cluster
+                // sit noticeably farther from + than its internal 7pt spacing.
+                .padding(.trailing, accessory == nil ? 6 : 0)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if let accessory {
+                accessoryView(accessory)
+            }
+        }
+        .background {
+            if isHovering {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(palette.hoverFill)
+            }
+        }
+        .onHover { isHovering = $0 }
+        .help(project.root)
+        .contextMenu {
+            Button("Remove from \(section.title)") {
+                settings.hideProject(project, from: section)
+            }
+
+            if settings.projectHasHiddenSidebarSections(project) {
+                Button("Show in All Sections") {
+                    settings.showProjectInAllSidebarSections(project)
+                }
+            }
+
+            Divider()
+
+            Button("Remove Project…", role: .destructive) {
+                confirmProjectRemoval(project, projectManager: projectManager)
+            }
+        }
+    }
+
+    private var projectColor: Color {
+        if context == nil {
+            return .clear
+        }
+        if let color = AgentSettings.shared.projectAppearance(for: project.root).color {
+            return Color(nsColor: NSColor(hexRGB: color.hexRGB) ?? .controlAccentColor)
+        }
+        return isSelected ? palette.selectedText.opacity(0.9) : palette.headerText.opacity(0.65)
+    }
+
+    @ViewBuilder
+    private func accessoryView(_ accessory: SidebarProjectGroupAccessory) -> some View {
+        switch accessory {
+        case .add(let help, let action):
+            Button(action: action) {
+                Image(systemName: "plus")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(palette.headerText)
+                    .frame(width: 24, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(help)
+
+        case .agentMenu(let resolvedProject, let help, let openSettings, let launch):
+            AgentLaunchMenu(
+                project: resolvedProject,
+                palette: palette,
+                openSettings: openSettings,
+                launch: launch
+            )
+            .frame(width: 24, height: 28)
+            .help(help)
+        }
+    }
+}
+
+@MainActor
+private func confirmProjectRemoval(
+    _ project: CherryProject,
+    projectManager: ProjectWindowModel
+) {
+    let runningProcessCount = projectManager.context(for: project.root)?.runningProcessCount() ?? 0
+    let alert = NSAlert()
+    alert.messageText = "Remove “\(project.name)” from Cherry?"
+    if runningProcessCount == 0 {
+        alert.informativeText = "The project will be removed from Agents, Terminals, and Commands. Project files will not be deleted; local Cherry settings for it will be removed."
+    } else if runningProcessCount == 1 {
+        alert.informativeText = "The project will be removed from every section and 1 running process will be stopped. Project files will not be deleted; local Cherry settings for it will be removed."
+    } else {
+        alert.informativeText = "The project will be removed from every section and \(runningProcessCount) running processes will be stopped. Project files will not be deleted; local Cherry settings for it will be removed."
+    }
+    alert.alertStyle = .warning
+    alert.addButton(withTitle: "Remove Project")
+    alert.addButton(withTitle: "Cancel")
+
+    if let window = NSApp.keyWindow ?? NSApp.mainWindow {
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            projectManager.removeProject(project)
+        }
+    } else if alert.runModal() == .alertFirstButtonReturn {
+        projectManager.removeProject(project)
+    }
+}
+
+private struct ProjectActivityIndicator: View {
+    @ObservedObject var activity: ProjectAggregateStatus
+
+    var body: some View {
+        if let indicator {
+            Image(systemName: indicator.symbol)
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(indicator.color)
+                .frame(width: 12, height: 12)
+                .help(indicator.help)
+        }
+    }
+
+    private var indicator: (symbol: String, color: Color, help: String)? {
+        if activity.needsAttention {
+            return ("exclamationmark.circle.fill", .orange, "A background agent needs attention")
+        }
+        if activity.hasUnread {
+            return ("circle.fill", .blue, "This project has unread terminal activity")
+        }
+        if activity.isWorking {
+            return ("circle.fill", .green, "An agent is working in this project")
+        }
+        return nil
+    }
+}
+
+@MainActor
+private func toggleSidebarProject(
+    _ project: CherryProject,
+    in section: ProjectSidebarSection,
+    projectManager: ProjectWindowModel
+) {
+    let shouldExpand = !projectManager.isProjectExpanded(project.root, in: section)
+    if shouldExpand {
+        guard projectManager.loadProject(project) != nil else { return }
+    }
+    projectManager.setProjectExpanded(
+        shouldExpand,
+        projectRoot: project.root,
+        in: section
+    )
+}
+
 private struct SidebarAgentSessionSection: View {
     @ObservedObject var settings: AgentSettings
     @ObservedObject var workspace: TerminalWorkspace
@@ -5340,24 +6151,29 @@ private struct SidebarAgentSessionSection: View {
     let pathDisplayMode: SidebarTerminalPathDisplayMode
     let showShortcutHints: Bool
     let openSettings: () -> Void
+    let showsHeader: Bool
+    let isProjectActive: Bool
+    let activateProject: () -> Void
 
     var body: some View {
         let project = settings.resolvedProject(for: projectRoot)
 
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                SidebarSectionHeader(
-                    title: "Agents",
-                    count: agentTree.sessions.count + (isIconDebugActive ? SidebarIconDebugFixtures.agentCount : 0),
-                    palette: palette
-                )
+        VStack(alignment: .leading, spacing: SidebarLayout.itemRowSpacing) {
+            if showsHeader {
+                HStack(spacing: 8) {
+                    SidebarSectionHeader(
+                        title: "Agents",
+                        count: agentTree.sessions.count + (isIconDebugActive ? SidebarIconDebugFixtures.agentCount : 0),
+                        palette: palette
+                    )
 
-                AgentLaunchMenu(
-                    project: project,
-                    palette: palette,
-                    openSettings: openSettings,
-                    launch: launch
-                )
+                    AgentLaunchMenu(
+                        project: project,
+                        palette: palette,
+                        openSettings: openSettings,
+                        launch: launch
+                    )
+                }
             }
 
             if isIconDebugActive {
@@ -5378,7 +6194,7 @@ private struct SidebarAgentSessionSection: View {
                 ForEach(agentTree.roots) { session in
                     let children = agentTree.children(of: session)
                     let isCollapsed = chromeState.collapsedAgentGroupIDs.contains(session.id)
-                    let isActiveGroup = chromeState.isShowingTerminalContent
+                    let isActiveGroup = isProjectActive && chromeState.isShowingTerminalContent
                         && (workspace.selectedSessionID == session.id
                             || children.contains { $0.id == workspace.selectedSessionID })
                     agentRow(
@@ -5416,16 +6232,20 @@ private struct SidebarAgentSessionSection: View {
     private func launch(_ agent: ResolvedAgentTool) {
         let project = settings.resolvedProject(for: projectRoot)
         guard agent.isLaunchable, let root = project.validProjectRoot else { return }
+        activateProject()
         chromeState.selectTerminal()
         workspace.addAgentSession(agent: agent.definition, projectRoot: root)
     }
 
     private var isIconDebugActive: Bool {
-        chromeState.isSidebarPlaygroundPresented
-            || (PrototypeFeatureFlags.isIconDebugEnabled && chromeState.isIconDebugOverlayPresented)
+        isProjectActive && (
+            chromeState.isSidebarPlaygroundPresented
+                || (PrototypeFeatureFlags.isIconDebugEnabled && chromeState.isIconDebugOverlayPresented)
+        )
     }
 
     private func select(_ session: TerminalSession) {
+        activateProject()
         chromeState.selectTerminal()
         workspace.select(session)
     }
@@ -5443,7 +6263,9 @@ private struct SidebarAgentSessionSection: View {
     ) -> some View {
         SidebarTabRow(
             session: session,
-            isSelected: chromeState.isShowingTerminalContent && workspace.selectedSessionID == session.id,
+            isSelected: isProjectActive
+                && chromeState.isShowingTerminalContent
+                && workspace.selectedSessionID == session.id,
             projectRoot: projectRoot,
             presentation: presentation,
             pathDisplayMode: pathDisplayMode,
@@ -5520,14 +6342,22 @@ private struct AgentLaunchMenu: View {
                 openSettings()
             }
         } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(palette.headerText)
-                .frame(width: 22, height: 22)
+            Color.clear
+                .frame(width: 24, height: 28)
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .buttonStyle(.plain)
+        .overlay {
+            Image(systemName: "plus")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(palette.headerText)
+                .frame(width: 24, height: 28)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+        .accessibilityLabel("Add Agent")
         .help("New agent")
     }
 }
@@ -5770,30 +6600,37 @@ private struct SidebarCommandSection: View {
     let commands: [ProjectCommandDefinition]
     let shortcutStartIndex: Int
     let showShortcutHints: Bool
+    let showsHeader: Bool
+    let isProjectActive: Bool
+    let activateProject: () -> Void
+    let addRequest: Int
+    let consumeAddRequest: () -> Bool
 
     @State private var editingCommand: ProjectCommandDefinition?
     @State private var editingOriginalName: String?
     @State private var commandError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                SidebarSectionHeader(
-                    title: "Commands",
-                    count: commands.count + (isIconDebugActive ? SidebarIconDebugFixtures.commandCount : 0),
-                    palette: palette
-                )
+        VStack(alignment: .leading, spacing: SidebarLayout.itemRowSpacing) {
+            if showsHeader {
+                HStack(spacing: 8) {
+                    SidebarSectionHeader(
+                        title: "Commands",
+                        count: commands.count + (isIconDebugActive ? SidebarIconDebugFixtures.commandCount : 0),
+                        palette: palette
+                    )
 
-                Button(action: addCommand) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(palette.headerText)
-                        .frame(width: 22, height: 22)
-                        .contentShape(Rectangle())
+                    Button(action: addCommand) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(palette.headerText)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(projectRoot == nil)
+                    .help("Add command")
                 }
-                .buttonStyle(.plain)
-                .disabled(projectRoot == nil)
-                .help("Add command")
             }
 
             if isIconDebugActive {
@@ -5814,8 +6651,10 @@ private struct SidebarCommandSection: View {
                         command: command,
                         session: session,
                         projectRoot: projectRoot,
-                        isSelected: chromeState.focusedIdleCommandName == command.name
-                            || (chromeState.isShowingTerminalContent && (session.map { workspace.selectedSessionID == $0.id } ?? false)),
+                        isSelected: isProjectActive
+                            && (chromeState.focusedIdleCommandName == command.name
+                                || (chromeState.isShowingTerminalContent
+                                    && (session.map { workspace.selectedSessionID == $0.id } ?? false))),
                         presentation: presentation,
                         palette: palette,
                         shortcutNumber: shortcutStartIndex + index + 1,
@@ -5824,6 +6663,7 @@ private struct SidebarCommandSection: View {
                         stop: { stop(session) },
                         restart: { restart(command, existingSession: session) },
                         select: {
+                            activateProject()
                             if let session {
                                 chromeState.selectTerminal()
                                 workspace.select(session)
@@ -5919,6 +6759,17 @@ private struct SidebarCommandSection: View {
                 }
             )
         }
+        .onChange(of: addRequest) { _, _ in
+            handleAddRequest()
+        }
+        .onAppear {
+            handleAddRequest()
+        }
+    }
+
+    private func handleAddRequest() {
+        guard consumeAddRequest() else { return }
+        addCommand()
     }
 
     private func addCommand() {
@@ -5928,6 +6779,7 @@ private struct SidebarCommandSection: View {
 
     private func start(_ command: ProjectCommandDefinition, existingSession: TerminalSession?) {
         guard command.isLaunchable, let root = settings.resolvedProject(for: projectRoot).validProjectRoot else { return }
+        activateProject()
         if let existingSession {
             if existingSession.isRunningCommand {
                 chromeState.selectTerminal()
@@ -5945,6 +6797,7 @@ private struct SidebarCommandSection: View {
 
     private func restart(_ command: ProjectCommandDefinition, existingSession: TerminalSession?) {
         guard command.isLaunchable else { return }
+        activateProject()
         if let existingSession {
             existingSession.restart()
             chromeState.selectTerminal()
@@ -5973,8 +6826,10 @@ private struct SidebarCommandSection: View {
     }
 
     private var isIconDebugActive: Bool {
-        chromeState.isSidebarPlaygroundPresented
-            || (PrototypeFeatureFlags.isIconDebugEnabled && chromeState.isIconDebugOverlayPresented)
+        isProjectActive && (
+            chromeState.isSidebarPlaygroundPresented
+                || (PrototypeFeatureFlags.isIconDebugEnabled && chromeState.isIconDebugOverlayPresented)
+        )
     }
 }
 
@@ -6274,12 +7129,14 @@ private struct SidebarCommandRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: label.detail == nil ? 42 : 46)
+            .frame(height: label.detail == nil ? SidebarLayout.singleLineItemRowHeight : 46)
             .padding(.leading, SidebarLayout.rowHorizontalInset)
             .padding(.trailing, SidebarLayout.rowHorizontalInset)
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .background {
                 rowBackground(palette: palette)
+                    .padding(.horizontal, SidebarLayout.selectionBackgroundHorizontalInset)
+                    .padding(.vertical, SidebarLayout.selectionBackgroundVerticalInset)
             }
         }
         .buttonStyle(.plain)
@@ -6292,15 +7149,15 @@ private struct SidebarCommandRow: View {
     @ViewBuilder
     private func rowBackground(palette: SidebarPalette) -> some View {
         if isSelected {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: SidebarLayout.selectionBackgroundCornerRadius, style: .continuous)
                 .fill(palette.selectedFill)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: SidebarLayout.selectionBackgroundCornerRadius, style: .continuous)
                         .strokeBorder(palette.selectedStroke, lineWidth: 1)
                 }
                 .shadow(color: palette.selectedShadow, radius: 9, y: 4)
         } else if isHovered {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: SidebarLayout.selectionBackgroundCornerRadius, style: .continuous)
                 .fill(palette.hoverFill)
         }
     }
@@ -6343,7 +7200,7 @@ private extension TerminalSession {
 
 private struct SidebarSectionHeader: View {
     let title: String
-    let count: Int
+    let count: Int?
     let palette: SidebarPalette
 
     var body: some View {
@@ -6357,10 +7214,12 @@ private struct SidebarSectionHeader: View {
                 .fill(palette.headerText.opacity(0.22))
                 .frame(height: 1)
 
-            Text("\(count)")
-                .font(.system(size: 12, weight: .medium))
-                .monospacedDigit()
-                .foregroundStyle(palette.headerText)
+            if let count {
+                Text("\(count)")
+                    .font(.system(size: 12, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundStyle(palette.headerText)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -6393,20 +7252,32 @@ private struct SidebarSessionSection: View {
     let pathDisplayMode: SidebarTerminalPathDisplayMode
     let shortcutStartIndex: Int
     let showShortcutHints: Bool
+    let showsHeader: Bool
+    let isProjectActive: Bool
+    let activateProject: () -> Void
 
     @State private var draggedDisplayItemID: UUID?
     @State private var draggedRowOffsetY: CGFloat = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            SidebarSectionHeader(
-                title: title,
-                count: displayItems.count + (isIconDebugActive ? SidebarIconDebugFixtures.terminalCount : 0),
-                palette: palette
-            )
+        VStack(alignment: .leading, spacing: SidebarLayout.itemRowSpacing) {
+            if showsHeader {
+                SidebarSectionHeader(
+                    title: title,
+                    count: displayItems.count + (isIconDebugActive ? SidebarIconDebugFixtures.terminalCount : 0),
+                    palette: palette
+                )
+            }
 
             if isIconDebugActive {
                 SidebarIconDebugTerminalPreview(palette: palette)
+            }
+
+            if displayItems.isEmpty && !isIconDebugActive {
+                SidebarEmptyRow(
+                    title: "No \(title.lowercased())",
+                    palette: palette
+                )
             }
 
             ForEach(Array(displayItems.enumerated()), id: \.element.id) { index, item in
@@ -6437,6 +7308,7 @@ private struct SidebarSessionSection: View {
                     },
                     onSelect: { sessionID in
                         guard let session = workspace.session(withID: sessionID) else { return }
+                        activateProject()
                         chromeState.selectNote(id: nil)
                         chromeState.selectTerminal()
                         workspace.select(session)
@@ -6464,8 +7336,10 @@ private struct SidebarSessionSection: View {
     }
 
     private var isIconDebugActive: Bool {
-        chromeState.isSidebarPlaygroundPresented
-            || (PrototypeFeatureFlags.isIconDebugEnabled && chromeState.isIconDebugOverlayPresented)
+        isProjectActive && (
+            chromeState.isSidebarPlaygroundPresented
+                || (PrototypeFeatureFlags.isIconDebugEnabled && chromeState.isIconDebugOverlayPresented)
+        )
     }
 
     private func primarySelectionID(for item: TerminalDisplayItem) -> UUID {
@@ -6510,13 +7384,16 @@ private struct SidebarSessionSection: View {
             if let session = workspace.session(withID: sessionID) {
                 SidebarTabRow(
                     session: session,
-                    isSelected: chromeState.isShowingTerminalContent && workspace.selectedSessionID == session.id,
+                    isSelected: isProjectActive
+                        && chromeState.isShowingTerminalContent
+                        && workspace.selectedSessionID == session.id,
                     projectRoot: projectRoot,
                     presentation: presentation,
                     pathDisplayMode: pathDisplayMode,
                     shortcutNumber: shortcutStartIndex + index + 1,
                     showShortcutHint: showShortcutHints,
                     onSelect: {
+                        activateProject()
                         chromeState.selectTerminal()
                         workspace.select(session)
                     }
@@ -6536,7 +7413,9 @@ private struct SidebarSessionSection: View {
                     pathDisplayMode: pathDisplayMode,
                     shortcutNumber: shortcutStartIndex + index + 1,
                     showShortcutHint: showShortcutHints,
-                    palette: palette
+                    palette: palette,
+                    isProjectActive: isProjectActive,
+                    activateProject: activateProject
                 )
             }
         }
@@ -6590,6 +7469,8 @@ private struct SidebarSplitTabRow: View {
     let shortcutNumber: Int
     let showShortcutHint: Bool
     let palette: SidebarPalette
+    let isProjectActive: Bool
+    let activateProject: () -> Void
 
     @State private var isHovered = false
 
@@ -6614,10 +7495,13 @@ private struct SidebarSplitTabRow: View {
                         workspace: workspace,
                         chromeState: chromeState,
                         pathDisplayMode: pathDisplayMode,
-                        isActive: chromeState.isShowingTerminalContent && workspace.selectedSessionID == session.id,
+                        isActive: isProjectActive
+                            && chromeState.isShowingTerminalContent
+                            && workspace.selectedSessionID == session.id,
                         isRowSelected: isSelected,
                         palette: palette,
                         onSelect: {
+                            activateProject()
                             chromeState.selectTerminal()
                             workspace.select(session)
                         }
@@ -6630,16 +7514,19 @@ private struct SidebarSplitTabRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(height: 50)
+        .frame(height: SidebarLayout.singleLineItemRowHeight)
         .padding(.leading, SidebarLayout.rowHorizontalInset)
         .padding(.trailing, SidebarLayout.rowHorizontalInset)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .background {
             rowBackground
+                .padding(.horizontal, SidebarLayout.selectionBackgroundHorizontalInset)
+                .padding(.vertical, SidebarLayout.selectionBackgroundVerticalInset)
         }
         .padding(.leading, -SidebarLayout.rowHorizontalInset)
         .onTapGesture {
             if let session = workspace.session(withID: group.activeSessionID) {
+                activateProject()
                 chromeState.selectTerminal()
                 workspace.select(session)
             }
@@ -6677,7 +7564,8 @@ private struct SidebarSplitTabRow: View {
     }
 
     private var isSelected: Bool {
-        guard chromeState.isShowingTerminalContent,
+        guard isProjectActive,
+              chromeState.isShowingTerminalContent,
               let selectedSessionID = workspace.selectedSessionID
         else {
             return false
@@ -6692,15 +7580,15 @@ private struct SidebarSplitTabRow: View {
     @ViewBuilder
     private var rowBackground: some View {
         if isSelected {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: SidebarLayout.selectionBackgroundCornerRadius, style: .continuous)
                 .fill(palette.selectedFill)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: SidebarLayout.selectionBackgroundCornerRadius, style: .continuous)
                         .strokeBorder(palette.selectedStroke, lineWidth: 1)
                 }
                 .shadow(color: palette.selectedShadow, radius: 9, y: 4)
         } else if isHovered {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: SidebarLayout.selectionBackgroundCornerRadius, style: .continuous)
                 .fill(palette.hoverFill)
         }
     }
@@ -7930,7 +8818,7 @@ private struct SidebarTabRow: View {
         let rowHeight: CGFloat = if nested {
             CGFloat(label.detail == nil ? childRowHeight : childDetailRowHeight)
         } else {
-            label.detail == nil ? 42 : 50
+            label.detail == nil ? SidebarLayout.singleLineItemRowHeight : 50
         }
 
         HStack(spacing: nested ? 6 : 8) {
@@ -8032,8 +8920,13 @@ private struct SidebarTabRow: View {
         .padding(.trailing, SidebarLayout.rowHorizontalInset)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .background(alignment: .leading) {
-            rowBackground(palette: palette)
+            rowBackground(
+                palette: palette,
+                cornerRadius: SidebarLayout.selectionBackgroundCornerRadius
+            )
                 .padding(.leading, nestedBackgroundLeadingInset)
+                .padding(.horizontal, SidebarLayout.selectionBackgroundHorizontalInset)
+                .padding(.vertical, SidebarLayout.selectionBackgroundVerticalInset)
         }
         .padding(.leading, -SidebarLayout.rowHorizontalInset)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -8052,17 +8945,17 @@ private struct SidebarTabRow: View {
     }
 
     @ViewBuilder
-    private func rowBackground(palette: SidebarPalette) -> some View {
+    private func rowBackground(palette: SidebarPalette, cornerRadius: CGFloat) -> some View {
         if isSelected {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(palette.selectedFill)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                         .strokeBorder(palette.selectedStroke, lineWidth: 1)
                 }
                 .shadow(color: palette.selectedShadow, radius: 9, y: 4)
         } else if isHovered {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(palette.hoverFill)
         }
     }

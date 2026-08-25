@@ -731,6 +731,7 @@ final class AgentSettings: ObservableObject {
     @Published private(set) var featureOverridesByProject: [String: ProjectFeatureOverrides] = [:]
     @Published private(set) var appearanceOverridesByProject: [String: ProjectAppearanceOverrides] = [:]
     @Published private(set) var hiddenWorktreesByProject: [String: Set<String>] = [:]
+    @Published private(set) var hiddenSidebarSectionsByProject: [String: Set<ProjectSidebarSection>] = [:]
     @Published private(set) var lastActiveWorktreeByProject: [String: String] = [:]
     @Published var agentSummaryTool: AgentSummaryTool {
         didSet {
@@ -784,6 +785,7 @@ final class AgentSettings: ObservableObject {
         featureOverridesByProject = Self.loadFeatureOverridesByProject(from: defaults)
         appearanceOverridesByProject = Self.loadAppearanceOverridesByProject(from: defaults)
         hiddenWorktreesByProject = Self.loadHiddenWorktreesByProject(from: defaults)
+        hiddenSidebarSectionsByProject = Self.loadHiddenSidebarSectionsByProject(from: defaults)
         lastActiveWorktreeByProject = Self.loadLastActiveWorktreesByProject(from: defaults)
         let storedSummaryCommand = defaults.string(forKey: Keys.agentSummaryCommand) ?? ""
         let storedSummaryTool = Self.loadAgentSummaryTool(from: defaults, command: storedSummaryCommand)
@@ -972,6 +974,7 @@ final class AgentSettings: ObservableObject {
             projects.append(project)
             saveProjects()
         }
+        showProjectInAllSidebarSections(project)
         return project
     }
 
@@ -981,6 +984,7 @@ final class AgentSettings: ObservableObject {
         featureOverridesByProject.removeValue(forKey: project.root)
         appearanceOverridesByProject.removeValue(forKey: project.root)
         hiddenWorktreesByProject.removeValue(forKey: project.root)
+        hiddenSidebarSectionsByProject.removeValue(forKey: project.root)
         lastActiveWorktreeByProject.removeValue(forKey: project.root)
         if lastOpenedProjectRoot == project.root {
             lastOpenedProjectRoot = projects.first?.root
@@ -991,6 +995,7 @@ final class AgentSettings: ObservableObject {
         saveFeatureOverrides()
         saveAppearanceOverrides()
         saveHiddenWorktrees()
+        saveHiddenSidebarSections()
         saveLastActiveWorktrees()
     }
 
@@ -1029,6 +1034,24 @@ final class AgentSettings: ObservableObject {
             hiddenWorktreesByProject[root] = normalized
         }
         saveHiddenWorktrees()
+    }
+
+    func isProjectVisible(_ project: CherryProject, in section: ProjectSidebarSection) -> Bool {
+        hiddenSidebarSectionsByProject[project.root]?.contains(section) != true
+    }
+
+    func projectHasHiddenSidebarSections(_ project: CherryProject) -> Bool {
+        hiddenSidebarSectionsByProject[project.root]?.isEmpty == false
+    }
+
+    func hideProject(_ project: CherryProject, from section: ProjectSidebarSection) {
+        hiddenSidebarSectionsByProject[project.root, default: []].insert(section)
+        saveHiddenSidebarSections()
+    }
+
+    func showProjectInAllSidebarSections(_ project: CherryProject) {
+        guard hiddenSidebarSectionsByProject.removeValue(forKey: project.root) != nil else { return }
+        saveHiddenSidebarSections()
     }
 
     func lastActiveWorktreeRoot(for repositoryRoot: String) -> String? {
@@ -1185,6 +1208,14 @@ final class AgentSettings: ObservableObject {
         defaults.set(data, forKey: Keys.hiddenWorktreesByProject)
     }
 
+    private func saveHiddenSidebarSections() {
+        let encoded = hiddenSidebarSectionsByProject.mapValues { sections in
+            sections.map(\.rawValue).sorted()
+        }
+        guard let data = try? JSONEncoder().encode(encoded) else { return }
+        defaults.set(data, forKey: Keys.hiddenSidebarSectionsByProject)
+    }
+
     private func saveLastActiveWorktrees() {
         guard let data = try? JSONEncoder().encode(lastActiveWorktreeByProject) else { return }
         defaults.set(data, forKey: Keys.lastActiveWorktreeByProject)
@@ -1288,6 +1319,26 @@ final class AgentSettings: ObservableObject {
             let normalized = Set(worktreeRoots.compactMap(validDirectory))
             if !normalized.isEmpty {
                 result[root] = normalized
+            }
+        }
+        return result
+    }
+
+    private static func loadHiddenSidebarSectionsByProject(
+        from defaults: UserDefaults
+    ) -> [String: Set<ProjectSidebarSection>] {
+        guard let data = defaults.data(forKey: Keys.hiddenSidebarSectionsByProject),
+              let decoded = try? JSONDecoder().decode([String: [String]].self, from: data)
+        else {
+            return [:]
+        }
+
+        var result: [String: Set<ProjectSidebarSection>] = [:]
+        for (projectRoot, rawSections) in decoded {
+            guard let root = validDirectory(projectRoot) else { continue }
+            let sections = Set(rawSections.compactMap(ProjectSidebarSection.init(rawValue:)))
+            if !sections.isEmpty {
+                result[root] = sections
             }
         }
         return result
@@ -1443,6 +1494,7 @@ final class AgentSettings: ObservableObject {
         static let featureOverridesByProject = "features.byProject"
         static let appearanceOverridesByProject = "appearance.byProject"
         static let hiddenWorktreesByProject = "worktrees.hiddenByProject"
+        static let hiddenSidebarSectionsByProject = "projects.hiddenSidebarSectionsByProject"
         static let lastActiveWorktreeByProject = "worktrees.lastActiveByProject"
         static let agentSummaryTool = "agents.summaryTool"
         static let agentSummaryCadence = "agents.summaryCadence"

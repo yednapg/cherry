@@ -14,6 +14,7 @@ final class ProjectWindowRegistry {
     private var noteStores: [String: WeakNoteStore] = [:]
     private var todoStores: [String: WeakTodoStore] = [:]
     private var chromeStates: [String: WeakChromeState] = [:]
+    private var projectManagersByWindow: [ObjectIdentifier: WeakProjectWindowModel] = [:]
     private var activeProjectRoot: String?
     weak var activeWorkspace: TerminalWorkspace?
     weak var activeNoteStore: ProjectNoteStore?
@@ -88,7 +89,10 @@ final class ProjectWindowRegistry {
         let repositoryRoots = repositories.values.flatMap {
             $0.repository?.worktrees.map(\.root) ?? []
         }
-        return Array(Set(repositoryRoots + Array(workspaces.keys))).sorted()
+        let managerRoots = projectManagersByWindow.values.flatMap {
+            $0.projectManager?.loadedProjectRoots ?? []
+        }
+        return Array(Set(repositoryRoots + managerRoots + Array(workspaces.keys))).sorted()
     }
 
     func canonicalProjectRoot(for projectRoot: String) -> String {
@@ -121,6 +125,9 @@ final class ProjectWindowRegistry {
 
     func workspace(for projectRoot: String) -> TerminalWorkspace? {
         pruneStaleWindows()
+        if let context = projectManager(containing: projectRoot)?.context(for: projectRoot) {
+            return context.repository.workspaceIfLoaded(for: projectRoot) ?? context.workspace
+        }
         if let repository = repository(for: projectRoot) {
             return repository.workspaceIfLoaded(for: projectRoot)
         }
@@ -134,6 +141,9 @@ final class ProjectWindowRegistry {
     /// pointing at a previously focused window.
     var keyWindowWorkspace: TerminalWorkspace? {
         pruneStaleWindows()
+        if let projectManager = projectManager(for: NSApp.keyWindow) {
+            return projectManager.activeWorkspace
+        }
         guard let projectRoot = projectRoot(for: NSApp.keyWindow) else { return nil }
         return workspaces[projectRoot]?.workspace
     }
@@ -142,6 +152,9 @@ final class ProjectWindowRegistry {
     /// `keyWindowWorkspace` when a menu action needs repository-wide state.
     var keyWindowRepository: RepositoryWorkspace? {
         pruneStaleWindows()
+        if let projectManager = projectManager(for: NSApp.keyWindow) {
+            return projectManager.activeContext?.repository
+        }
         guard let projectRoot = projectRoot(for: NSApp.keyWindow) else { return nil }
         return repositories[projectRoot]?.repository
     }
@@ -150,6 +163,9 @@ final class ProjectWindowRegistry {
     /// `keyWindowWorkspace` for why menu actions resolve through this.
     var keyWindowChromeState: ProjectWindowChromeState? {
         pruneStaleWindows()
+        if let projectManager = projectManager(for: NSApp.keyWindow) {
+            return projectManager.chromeState
+        }
         guard let projectRoot = projectRoot(for: NSApp.keyWindow) else { return nil }
         return chromeStates[projectRoot]?.chromeState
     }
@@ -164,17 +180,78 @@ final class ProjectWindowRegistry {
 
     func noteStore(for projectRoot: String) -> ProjectNoteStore? {
         pruneStaleWindows()
+        if let context = projectManager(containing: projectRoot)?.context(for: projectRoot) {
+            return context.noteStore
+        }
         return noteStores[repositoryRoot(for: projectRoot)]?.noteStore
     }
 
     func todoStore(for projectRoot: String) -> ProjectTodoStore? {
         pruneStaleWindows()
+        if let context = projectManager(containing: projectRoot)?.context(for: projectRoot) {
+            return context.todoStore
+        }
         return todoStores[repositoryRoot(for: projectRoot)]?.todoStore
     }
 
     func chromeState(for projectRoot: String) -> ProjectWindowChromeState? {
         pruneStaleWindows()
+        if let projectManager = projectManager(containing: projectRoot) {
+            return projectManager.chromeState
+        }
         return chromeStates[repositoryRoot(for: projectRoot)]?.chromeState
+    }
+
+    @discardableResult
+    func register(window: NSWindow, projectManager: ProjectWindowModel) -> Bool {
+        pruneStaleWindows()
+        projectManagersByWindow[ObjectIdentifier(window)] = WeakProjectWindowModel(projectManager)
+
+        for context in projectManager.contexts.values {
+            guard register(
+                window: window,
+                projectRoot: context.projectRoot,
+                workspace: context.workspace,
+                repository: context.repository,
+                noteStore: context.noteStore,
+                todoStore: context.todoStore,
+                chromeState: projectManager.chromeState
+            ) else {
+                return false
+            }
+        }
+        projectManagerDidActivate(projectManager)
+        return true
+    }
+
+    func projectManagerDidActivate(_ projectManager: ProjectWindowModel) {
+        guard let context = projectManager.activeContext else { return }
+        if let window = window(for: projectManager) {
+            _ = register(
+                window: window,
+                projectRoot: context.projectRoot,
+                workspace: context.workspace,
+                repository: context.repository,
+                noteStore: context.noteStore,
+                todoStore: context.todoStore,
+                chromeState: projectManager.chromeState
+            )
+        }
+        activate(
+            projectRoot: context.workspace.projectRoot ?? context.projectRoot,
+            workspace: context.workspace,
+            noteStore: context.noteStore,
+            todoStore: context.todoStore,
+            chromeState: projectManager.chromeState
+        )
+    }
+
+    func projectManager(
+        _ projectManager: ProjectWindowModel,
+        didRemoveProjectRoot projectRoot: String
+    ) {
+        guard let window = window(for: projectManager) else { return }
+        unregister(window: window, projectRoot: projectRoot)
     }
 
     @discardableResult
@@ -251,7 +328,24 @@ final class ProjectWindowRegistry {
         }
     }
 
+    func unregister(window: NSWindow) {
+        let roots = windows.compactMap { projectRoot, weakWindow in
+            weakWindow.window === window ? projectRoot : nil
+        }
+        for projectRoot in roots {
+            unregister(window: window, projectRoot: projectRoot)
+        }
+        projectManagersByWindow.removeValue(forKey: ObjectIdentifier(window))
+    }
+
     func focus(projectRoot: String, activateWorktree: Bool = true) -> Bool {
+        if focusExistingProject(
+            projectRoot: projectRoot,
+            activateWorktree: activateWorktree
+        ) {
+            return true
+        }
+
         let repositoryRoot = repositoryRoot(for: projectRoot)
         guard let window = windows[repositoryRoot]?.window else {
             windows.removeValue(forKey: repositoryRoot)
@@ -285,6 +379,33 @@ final class ProjectWindowRegistry {
         } else {
             AgentSettings.shared.markProjectOpened(repositoryRoot)
         }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        return true
+    }
+
+    /// Focuses a project that is already loaded by a project window. The
+    /// exclusion lets one window redirect an attempted cross-window load to
+    /// the existing owner without recursing when that owner activates it.
+    @discardableResult
+    func focusExistingProject(
+        projectRoot: String,
+        excluding excludedProjectManager: ProjectWindowModel? = nil,
+        activateWorktree: Bool = true
+    ) -> Bool {
+        pruneStaleWindows()
+        guard let projectManager = projectManager(containing: projectRoot),
+              projectManager !== excludedProjectManager,
+              let window = window(for: projectManager),
+              projectManager.activate(
+                  projectRoot: projectRoot,
+                  activateWorktree: activateWorktree
+              ) != nil
+        else {
+            return false
+        }
+
+        _ = register(window: window, projectManager: projectManager)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         return true
@@ -383,6 +504,13 @@ final class ProjectWindowRegistry {
                   chromeStates[projectRoot]?.chromeState?.isShowingTerminalContent ?? true,
                   let window = windows[projectRoot]?.window
             else {
+                continue
+            }
+
+            if let projectManager = projectManager(for: window),
+               projectManager.activeContext.map({
+                   canonicalProjectRoot(for: $0.projectRoot)
+               }) != projectRoot {
                 continue
             }
 
@@ -512,7 +640,12 @@ final class ProjectWindowRegistry {
         }
         let workspace = repository.activeWorkspace
         workspaces[repositoryRoot] = WeakWorkspace(workspace)
-        if windows[repositoryRoot]?.window?.isKeyWindow == true {
+        let window = windows[repositoryRoot]?.window
+        if let projectManager = projectManager(for: window),
+           projectManager.activeContext?.repository !== repository {
+            return
+        }
+        if window?.isKeyWindow == true {
             activate(
                 projectRoot: repository.activeWorktreeRoot,
                 workspace: workspace,
@@ -548,9 +681,32 @@ final class ProjectWindowRegistry {
 
     private func projectRoot(for window: NSWindow?) -> String? {
         guard let window else { return nil }
+        if let projectManager = projectManager(for: window) {
+            return projectManager.activeProjectRoot
+        }
         return windows.first { _, weakWindow in
             weakWindow.window === window
         }?.key
+    }
+
+    private func projectManager(for window: NSWindow?) -> ProjectWindowModel? {
+        guard let window else { return nil }
+        return projectManagersByWindow[ObjectIdentifier(window)]?.projectManager
+    }
+
+    private func projectManager(containing projectRoot: String) -> ProjectWindowModel? {
+        projectManagersByWindow.values.compactMap(\.projectManager).first { projectManager in
+            projectManager.context(for: projectRoot) != nil
+        }
+    }
+
+    private func window(for projectManager: ProjectWindowModel) -> NSWindow? {
+        guard let entry = projectManagersByWindow.first(where: { _, weakManager in
+            weakManager.projectManager === projectManager
+        }) else {
+            return nil
+        }
+        return NSApp.windows.first { ObjectIdentifier($0) == entry.key }
     }
 
     private func repositoryRoot(for projectRoot: String) -> String {
@@ -603,6 +759,10 @@ final class ProjectWindowRegistry {
                 activeChromeState = nil
             }
         }
+        projectManagersByWindow = projectManagersByWindow.filter { identifier, weakManager in
+            weakManager.projectManager != nil
+                && NSApp.windows.contains { ObjectIdentifier($0) == identifier }
+        }
     }
 }
 
@@ -651,6 +811,14 @@ private final class WeakChromeState {
 
     init(_ chromeState: ProjectWindowChromeState) {
         self.chromeState = chromeState
+    }
+}
+
+private final class WeakProjectWindowModel {
+    weak var projectManager: ProjectWindowModel?
+
+    init(_ projectManager: ProjectWindowModel) {
+        self.projectManager = projectManager
     }
 }
 
@@ -899,45 +1067,25 @@ final class ProjectWindowChromeState: ObservableObject {
 }
 
 struct ProjectWindowBinder: NSViewRepresentable {
-    let projectRoot: String?
-    let workspace: TerminalWorkspace
-    let repository: RepositoryWorkspace?
-    let noteStore: ProjectNoteStore?
-    let todoStore: ProjectTodoStore?
-    let chromeState: ProjectWindowChromeState?
+    let projectManager: ProjectWindowModel
 
     func makeNSView(context: Context) -> NSView {
         let view = ProjectWindowBinderView()
-        view.projectRoot = projectRoot
-        view.workspace = workspace
-        view.repository = repository
-        view.noteStore = noteStore
-        view.todoStore = todoStore
-        view.chromeState = chromeState
+        view.projectManager = projectManager
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
         guard let view = nsView as? ProjectWindowBinderView else { return }
-        view.projectRoot = projectRoot
-        view.workspace = workspace
-        view.repository = repository
-        view.noteStore = noteStore
-        view.todoStore = todoStore
-        view.chromeState = chromeState
+        view.projectManager = projectManager
         view.registerIfPossible()
     }
 }
 
 @MainActor
 private final class ProjectWindowBinderView: NSView {
-    weak var workspace: TerminalWorkspace?
-    weak var repository: RepositoryWorkspace?
-    weak var noteStore: ProjectNoteStore?
-    weak var todoStore: ProjectTodoStore?
-    weak var chromeState: ProjectWindowChromeState?
+    weak var projectManager: ProjectWindowModel?
     weak var boundWindow: NSWindow?
-    var projectRoot: String?
     private nonisolated(unsafe) var notificationObserver: NSObjectProtocol?
     private var closeDelegate: ProjectWindowCloseDelegate?
 
@@ -947,25 +1095,16 @@ private final class ProjectWindowBinderView: NSView {
     }
 
     func registerIfPossible() {
-        guard let window, let workspace else { return }
+        guard let window, let projectManager else { return }
         let claimed = ProjectWindowRegistry.shared.register(
             window: window,
-            projectRoot: projectRoot,
-            workspace: workspace,
-            repository: repository,
-            noteStore: noteStore,
-            todoStore: todoStore,
-            chromeState: chromeState
+            projectManager: projectManager
         )
         if !claimed {
             // Another window already owns this project. Close this duplicate
             // and bring the existing one forward.
-            if let repository {
-                repository.closeAllSessions()
-            } else {
-                workspace.closeAllSessions()
-            }
-            if let projectRoot {
+            projectManager.closeAllSessions()
+            if let projectRoot = projectManager.activeProjectRoot {
                 _ = ProjectWindowRegistry.shared.focus(projectRoot: projectRoot)
             }
             DispatchQueue.main.async { [weak window] in
@@ -992,9 +1131,10 @@ private final class ProjectWindowBinderView: NSView {
             window.delegate = closeDelegate
         }
 
-        closeDelegate?.projectRoot = projectRoot
-        closeDelegate?.workspace = workspace
-        closeDelegate?.repository = repository
+        closeDelegate?.projectManager = projectManager
+        closeDelegate?.projectRoot = projectManager?.activeProjectRoot
+        closeDelegate?.workspace = projectManager?.activeWorkspace
+        closeDelegate?.repository = projectManager?.activeContext?.repository
     }
 
     private func installObserver() {
@@ -1010,14 +1150,8 @@ private final class ProjectWindowBinderView: NSView {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                guard let self, let workspace = self.workspace else { return }
-                ProjectWindowRegistry.shared.activateWindow(
-                    projectRoot: self.projectRoot,
-                    workspace: self.repository?.activeWorkspace ?? workspace,
-                    noteStore: self.noteStore,
-                    todoStore: self.todoStore,
-                    chromeState: self.chromeState
-                )
+                guard let projectManager = self?.projectManager else { return }
+                ProjectWindowRegistry.shared.projectManagerDidActivate(projectManager)
             }
         }
     }
@@ -1026,7 +1160,6 @@ private final class ProjectWindowBinderView: NSView {
         let notificationObserver = notificationObserver
         let boundWindow = boundWindow
         let closeDelegate = closeDelegate
-        let projectRoot = projectRoot
 
         if let boundWindow {
             Task { @MainActor in
@@ -1036,7 +1169,7 @@ private final class ProjectWindowBinderView: NSView {
                 if boundWindow.delegate === closeDelegate {
                     boundWindow.delegate = closeDelegate?.previousDelegate
                 }
-                ProjectWindowRegistry.shared.unregister(window: boundWindow, projectRoot: projectRoot)
+                ProjectWindowRegistry.shared.unregister(window: boundWindow)
             }
         } else if let notificationObserver {
             NotificationCenter.default.removeObserver(notificationObserver)
@@ -1047,6 +1180,7 @@ private final class ProjectWindowBinderView: NSView {
 @MainActor
 final class ProjectWindowCloseDelegate: NSObject, NSWindowDelegate {
     weak var window: NSWindow?
+    weak var projectManager: ProjectWindowModel?
     weak var workspace: TerminalWorkspace?
     weak var repository: RepositoryWorkspace?
     weak var previousDelegate: NSWindowDelegate?
@@ -1063,15 +1197,17 @@ final class ProjectWindowCloseDelegate: NSObject, NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard !isCloseConfirmed else { return true }
 
-        guard let workspace else {
+        guard projectManager != nil || workspace != nil else {
             return previousWindowShouldClose(sender)
         }
 
         // Confirm for ANY running process (agents, live commands, terminals
         // executing a foreground program) — not just agents. (Product intent is to
         // later narrow this back to running agents only.)
-        let runningCount = repository?.runningProcessCount()
-            ?? workspace.sessionsWithRunningProcess().count
+        let runningCount = projectManager?.runningProcessCount()
+            ?? repository?.runningProcessCount()
+            ?? workspace?.sessionsWithRunningProcess().count
+            ?? 0
         guard runningCount > 0 else {
             return previousWindowShouldClose(sender)
         }
@@ -1083,7 +1219,7 @@ final class ProjectWindowCloseDelegate: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         if let window = notification.object as? NSWindow {
             closeWorkspaceIfNeeded()
-            ProjectWindowRegistry.shared.unregister(window: window, projectRoot: projectRoot)
+            ProjectWindowRegistry.shared.unregister(window: window)
         }
 
         previousDelegate?.windowWillClose?(notification)
@@ -1146,7 +1282,9 @@ final class ProjectWindowCloseDelegate: NSObject, NSWindowDelegate {
     private func closeWorkspaceIfNeeded() {
         guard !didCloseWorkspace else { return }
         didCloseWorkspace = true
-        if let repository {
+        if let projectManager {
+            projectManager.closeAllSessions()
+        } else if let repository {
             repository.closeAllSessions()
         } else {
             workspace?.closeAllSessions()

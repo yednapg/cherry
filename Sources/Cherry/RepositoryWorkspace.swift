@@ -44,6 +44,7 @@ final class RepositoryWorkspace: ObservableObject {
 
     init(
         projectRoot: String,
+        createInitialSession: Bool = true,
         service: GitWorktreeService = GitWorktreeService()
     ) {
         let root = URL(fileURLWithPath: projectRoot, isDirectory: true).standardizedFileURL.path
@@ -56,7 +57,10 @@ final class RepositoryWorkspace: ObservableObject {
         self.service = service
         activeWorktreeRoot = initialRoot
 
-        let initialWorkspace = TerminalWorkspace(projectRoot: initialRoot)
+        let initialWorkspace = TerminalWorkspace(
+            projectRoot: initialRoot,
+            createInitialSession: createInitialSession
+        )
         workspaces = [initialRoot: initialWorkspace]
         var initialResolvedPaths = [root: initialRoot]
         initialResolvedPaths[initialRoot] = initialRoot
