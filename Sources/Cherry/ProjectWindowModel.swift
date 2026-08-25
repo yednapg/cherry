@@ -71,6 +71,7 @@ final class ProjectWorkspaceContext {
 final class ProjectWindowModel: ObservableObject {
     @Published private(set) var activeProjectRoot: String?
     @Published private(set) var contexts: [String: ProjectWorkspaceContext] = [:]
+    @Published private(set) var projectRoots: [String] = []
     @Published private var expandedProjectRootsBySection: [ProjectSidebarSection: Set<String>] = [:]
     @Published private(set) var commandAddRequestRevision = 0
 
@@ -113,7 +114,17 @@ final class ProjectWindowModel: ObservableObject {
     }
 
     var loadedProjectRoots: [String] {
-        Array(contexts.keys)
+        projectRoots
+    }
+
+    var hasMultipleProjects: Bool {
+        projectRoots.count > 1
+    }
+
+    func projects(in section: ProjectSidebarSection) -> [CherryProject] {
+        projectRoots
+            .map { settings.selectedProject(for: $0) ?? CherryProject(root: $0) }
+            .filter { settings.isProjectVisible($0, in: section) }
     }
 
     func context(for requestedRoot: String) -> ProjectWorkspaceContext? {
@@ -278,6 +289,7 @@ final class ProjectWindowModel: ObservableObject {
             ProjectWindowRegistry.shared.projectManager(self, didRemoveProjectRoot: projectRoot)
         }
         contexts.removeValue(forKey: projectRoot)?.closeAllSessions()
+        projectRoots.removeAll { $0 == projectRoot }
         pendingCommandAddProjectRoots.remove(projectRoot)
         for section in ProjectSidebarSection.allCases {
             expandedProjectRootsBySection[section]?.remove(projectRoot)
@@ -287,9 +299,8 @@ final class ProjectWindowModel: ObservableObject {
         guard wasActive else { return }
         activeProjectRoot = nil
 
-        for remainingProject in settings.projects {
-            guard loadProject(remainingProject) != nil else { continue }
-            _ = openProject(remainingProject)
+        for remainingProjectRoot in projectRoots {
+            guard activate(projectRoot: remainingProjectRoot, activateWorktree: false) != nil else { continue }
             return
         }
     }
@@ -308,6 +319,9 @@ final class ProjectWindowModel: ObservableObject {
             createInitialSession: createInitialSession
         )
         contexts[context.projectRoot] = context
+        if !projectRoots.contains(context.projectRoot) {
+            projectRoots.append(context.projectRoot)
+        }
         return context
     }
 

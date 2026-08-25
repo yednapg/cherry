@@ -241,6 +241,7 @@ struct CherryApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.automatic)
         .windowStyle(.hiddenTitleBar)
+        .keyboardShortcut(KeyboardShortcut("n", modifiers: .command))
         .commands {
             CommandGroup(replacing: .printItem) {
                 Button("Command Palette") {

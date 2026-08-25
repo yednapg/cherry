@@ -16,6 +16,34 @@ struct ProjectWindowModelTests {
 
         #expect(model.activeProjectRoot == nil)
         #expect(model.contexts.isEmpty)
+        #expect(model.projectRoots.isEmpty)
+        #expect(!model.hasMultipleProjects)
+    }
+
+    @Test func addingProjectToBlankWindowDoesNotChangeExistingWindowMembership() throws {
+        let fixture = try ProjectWindowFixture()
+        defer { fixture.cleanUp() }
+        let settings = fixture.makeSettings()
+        let firstProject = try #require(settings.addProject(path: fixture.firstProject.path))
+        let existingWindow = fixture.makeModel(initialProjectRoot: firstProject.root, settings: settings)
+        let blankWindow = fixture.makeModel(initialProjectRoot: nil, settings: settings)
+        defer {
+            existingWindow.closeAllSessions()
+            blankWindow.closeAllSessions()
+        }
+
+        let secondProject = try #require(settings.addProject(path: fixture.secondProject.path))
+        _ = blankWindow.openProject(secondProject)
+
+        #expect(existingWindow.projectRoots == [firstProject.root])
+        #expect(!existingWindow.hasMultipleProjects)
+        #expect(existingWindow.projects(in: .agents) == [firstProject])
+        #expect(existingWindow.context(for: secondProject.root) == nil)
+        #expect(blankWindow.projectRoots == [secondProject.root])
+        #expect(!blankWindow.hasMultipleProjects)
+        #expect(blankWindow.projects(in: .agents) == [secondProject])
+        #expect(blankWindow.activeProjectRoot == secondProject.root)
+        #expect(blankWindow.activeWorkspace?.terminalSessions.count == 1)
     }
 
     @Test func projectActivityAppearsOnlyInAgentsSection() {
@@ -32,10 +60,12 @@ struct ProjectWindowModelTests {
 
         let firstContext = try #require(model.activeContext)
         let firstWorkspace = firstContext.workspace
+        #expect(!model.hasMultipleProjects)
 
         let secondContext = try #require(model.activate(projectRoot: fixture.secondProject.path))
 
         #expect(model.contexts.count == 2)
+        #expect(model.hasMultipleProjects)
         #expect(model.activeContext === secondContext)
         #expect(firstContext.workspace === firstWorkspace)
 
@@ -222,14 +252,34 @@ struct ProjectWindowModelTests {
         let secondProject = try #require(settings.addProject(path: fixture.secondProject.path))
         let model = fixture.makeModel(initialProjectRoot: firstProject.root, settings: settings)
         defer { model.closeAllSessions() }
+        _ = model.loadProject(secondProject)
+        #expect(model.hasMultipleProjects)
 
         model.removeProject(firstProject)
 
         #expect(settings.projects == [secondProject])
         #expect(model.context(for: firstProject.root) == nil)
         #expect(model.activeProjectRoot == secondProject.root)
+        #expect(!model.hasMultipleProjects)
         #expect(model.activeWorkspace?.terminalSessions.count == 1)
         #expect(model.activeWorkspace?.sessions.count == 1)
+    }
+
+    @Test func removingOnlyWindowProjectDoesNotImportAnotherGlobalProject() throws {
+        let fixture = try ProjectWindowFixture()
+        defer { fixture.cleanUp() }
+        let settings = fixture.makeSettings()
+        let firstProject = try #require(settings.addProject(path: fixture.firstProject.path))
+        let secondProject = try #require(settings.addProject(path: fixture.secondProject.path))
+        let model = fixture.makeModel(initialProjectRoot: firstProject.root, settings: settings)
+        defer { model.closeAllSessions() }
+
+        model.removeProject(firstProject)
+
+        #expect(settings.projects == [secondProject])
+        #expect(model.projectRoots.isEmpty)
+        #expect(model.contexts.isEmpty)
+        #expect(model.activeProjectRoot == nil)
     }
 }
 

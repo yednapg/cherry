@@ -4779,8 +4779,9 @@ private struct SidebarTabsView: View {
             SidebarTopChromeShield(projectRoot: repository.repositoryRoot, presentation: presentation)
         }
         .overlay(alignment: .topTrailing) {
-            if projectManager != nil {
+            if let projectManager {
                 SidebarUniversalProjectAddButton(
+                    projectManager: projectManager,
                     projectRoot: repository.repositoryRoot,
                     presentation: presentation
                 )
@@ -4823,6 +4824,7 @@ private struct SidebarUniversalProjectAddButton: View {
     @ObservedObject private var settings = AgentSettings.shared
     @ObservedObject private var terminalSettings = TerminalSettings.shared
 
+    @ObservedObject var projectManager: ProjectWindowModel
     let projectRoot: String?
     let presentation: SidebarPresentation
 
@@ -4857,8 +4859,12 @@ private struct SidebarUniversalProjectAddButton: View {
         panel.allowsMultipleSelection = false
         panel.prompt = "Add"
 
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        settings.addProject(path: url.path)
+        guard panel.runModal() == .OK, let url = panel.url,
+              let project = settings.addProject(path: url.path)
+        else {
+            return
+        }
+        _ = projectManager.loadProject(project)
     }
 }
 
@@ -5423,26 +5429,6 @@ extension NSUserInterfaceItemIdentifier {
     )
 }
 
-@MainActor
-private enum SidebarProjectGroupCollection {
-    static func projects(
-        settings: AgentSettings,
-        projectManager: ProjectWindowModel,
-        in section: ProjectSidebarSection
-    ) -> [CherryProject] {
-        var projects = settings.projects
-        var roots = Set(projects.map(\.root))
-        for root in projectManager.loadedProjectRoots where roots.insert(root).inserted {
-            projects.append(CherryProject(root: root))
-        }
-        if let activeProjectRoot = projectManager.activeProjectRoot,
-           roots.insert(activeProjectRoot).inserted {
-            projects.insert(CherryProject(root: activeProjectRoot), at: 0)
-        }
-        return projects.filter { settings.isProjectVisible($0, in: section) }
-    }
-}
-
 private struct SidebarProjectAgentGroups: View {
     @ObservedObject var settings: AgentSettings
     @ObservedObject var projectManager: ProjectWindowModel
@@ -5479,11 +5465,7 @@ private struct SidebarProjectAgentGroups: View {
     }
 
     private var projects: [CherryProject] {
-        SidebarProjectGroupCollection.projects(
-            settings: settings,
-            projectManager: projectManager,
-            in: .agents
-        )
+        projectManager.projects(in: .agents)
     }
 
     private func launch(_ agent: ResolvedAgentTool, in project: CherryProject) {
@@ -5673,11 +5655,7 @@ private struct SidebarProjectTerminalGroups: View {
     }
 
     private var projects: [CherryProject] {
-        SidebarProjectGroupCollection.projects(
-            settings: settings,
-            projectManager: projectManager,
-            in: .terminals
-        )
+        projectManager.projects(in: .terminals)
     }
 
 }
@@ -5817,11 +5795,7 @@ private struct SidebarProjectCommandGroups: View {
     }
 
     private var projects: [CherryProject] {
-        SidebarProjectGroupCollection.projects(
-            settings: settings,
-            projectManager: projectManager,
-            in: .commands
-        )
+        projectManager.projects(in: .commands)
     }
 }
 
