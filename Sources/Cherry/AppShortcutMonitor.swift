@@ -32,7 +32,6 @@ struct AppShortcutMonitor: NSViewRepresentable {
         case selectVisibleSidebarItem(Int)
         case presentCommandPalette
         case toggleSidebar
-        case addSession
         case splitDuplicate
         case focusPreviousPane
         case focusNextPane
@@ -60,8 +59,6 @@ struct AppShortcutMonitor: NSViewRepresentable {
             return .presentCommandPalette
         case "s":
             return .toggleSidebar
-        case "t":
-            return .addSession
         case "d":
             return .splitDuplicate
         case "[":
@@ -275,8 +272,6 @@ struct AppShortcutMonitor: NSViewRepresentable {
                 chromeState?.presentCommandPalette()
             case .toggleSidebar:
                 chromeState?.toggleSidebar()
-            case .addSession:
-                workspace?.addSession()
             case .splitDuplicate:
                 workspace?.splitDuplicateActiveTerminal()
             case .focusPreviousPane:

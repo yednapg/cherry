@@ -300,12 +300,6 @@ struct CherryApp: App {
                 }
                 .disabled(focusedChromeState == nil)
 
-                Button("New Tab") {
-                    keyWindowWorkspace?.addSession()
-                }
-                .keyboardShortcut("t")
-                .disabled(focusedWorkspace == nil)
-
                 Button("Split Right") {
                     keyWindowWorkspace?.splitDuplicateActiveTerminal()
                 }

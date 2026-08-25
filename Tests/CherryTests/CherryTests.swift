@@ -10159,6 +10159,10 @@ private func waitForSummaryCallCount(
         charactersIgnoringModifiers: "s",
         modifiers: [.command, .shift]
     ) == nil)
+    #expect(AppShortcutMonitor.shortcutAction(
+        charactersIgnoringModifiers: "t",
+        modifiers: [.command]
+    ) == nil)
 }
 
 @MainActor
