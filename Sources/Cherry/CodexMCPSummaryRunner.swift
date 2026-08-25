@@ -44,16 +44,21 @@ final class CodexMCPSummaryRunner: @unchecked Sendable {
         timeout: TimeInterval = 20
     ) async throws -> AgentSummaryRunner.Result {
         let prompt = summaryPrompt(for: transcript)
-        return try await Task.detached(priority: .utility) {
-            try self.queue.sync {
-                try self.runBlocking(
-                    prompt: prompt,
-                    workingDirectory: workingDirectory,
-                    model: model,
-                    timeout: timeout
-                )
+        return try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    let result = try self.runBlocking(
+                        prompt: prompt,
+                        workingDirectory: workingDirectory,
+                        model: model,
+                        timeout: timeout
+                    )
+                    continuation.resume(returning: result)
+                } catch {
+                    continuation.resume(throwing: error)
+                }
             }
-        }.value
+        }
     }
 
     private func runBlocking(

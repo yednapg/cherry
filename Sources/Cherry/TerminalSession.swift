@@ -2334,7 +2334,10 @@ final class TerminalSession: ObservableObject, Identifiable {
         restartOnExit: Bool = false,
         launchBackend: TerminalSessionLaunchBackend = .nativePTY,
         summaryRunner: @escaping AgentSummaryRun = { transcript, workingDirectory, model in
-            try await CodexMCPSummaryRunner.shared.run(
+            // Each session owns at most one in-flight summary. Use an isolated
+            // runner so several projects do not queue behind one slow network
+            // request on the shared runner.
+            try await CodexMCPSummaryRunner().run(
                 transcript: transcript,
                 workingDirectory: workingDirectory,
                 model: model
