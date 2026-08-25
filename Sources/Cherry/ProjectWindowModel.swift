@@ -200,8 +200,7 @@ final class ProjectWindowModel: ObservableObject {
            ) {
             return nil
         }
-        let context = existingContext
-            ?? loadContext(projectRoot: project.root, createInitialSession: false)
+        let context = existingContext ?? loadContext(projectRoot: project.root)
         if startsContextsOnActivation {
             context?.startIfNeeded()
         }

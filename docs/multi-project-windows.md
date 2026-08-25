@@ -54,8 +54,8 @@ event-delivery mechanism.
 Closing a window calls `ProjectWindowModel.closeAllSessions()`, which delegates
 to every retained context and stops all of their processes. Removing a project
 closes that project's sessions, clears its sidebar state, removes it from
-settings, and activates the first remaining configured project without creating
-an initial terminal.
+settings, and activates the first remaining configured project with its default
+terminal.
 
 When changing this lifecycle, preserve these invariants:
 

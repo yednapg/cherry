@@ -154,7 +154,7 @@ struct ProjectWindowModelTests {
         #expect(model.isProjectExpanded(fixture.secondProject.path, in: .commands))
     }
 
-    @Test func expandingABackgroundProjectCanLoadItWithoutChangingSelection() throws {
+    @Test func expandingABackgroundProjectCreatesItsDefaultTerminalWithoutChangingSelection() throws {
         let fixture = try ProjectWindowFixture()
         defer { fixture.cleanUp() }
         let model = fixture.makeModel(initialProjectRoot: fixture.firstProject.path)
@@ -166,12 +166,13 @@ struct ProjectWindowModelTests {
 
         #expect(model.activeContext === firstContext)
         #expect(model.context(for: fixture.secondProject.path) === secondContext)
-        #expect(secondContext.workspace.sessions.isEmpty)
+        #expect(secondContext.workspace.terminalSessions.count == 1)
+        #expect(secondContext.workspace.sessions.count == 1)
         #expect(model.isProjectExpanded(fixture.secondProject.path, in: .terminals))
         #expect(!model.isProjectExpanded(fixture.secondProject.path, in: .agents))
     }
 
-    @Test func requestingACommandLoadsAnEmptyProjectAndQueuesTheEditorOnce() throws {
+    @Test func requestingACommandLoadsAProjectTerminalAndQueuesTheEditorOnce() throws {
         let fixture = try ProjectWindowFixture()
         defer { fixture.cleanUp() }
         let model = fixture.makeModel(initialProjectRoot: fixture.firstProject.path)
@@ -181,7 +182,8 @@ struct ProjectWindowModelTests {
         let context = try #require(model.requestNewCommand(in: project))
 
         #expect(model.activeContext === context)
-        #expect(context.workspace.sessions.isEmpty)
+        #expect(context.workspace.terminalSessions.count == 1)
+        #expect(context.workspace.sessions.count == 1)
         #expect(model.isProjectExpanded(project.root, in: .commands))
         #expect(model.commandAddRequestRevision == 1)
         #expect(model.consumeNewCommandRequest(projectRoot: project.root))
@@ -212,7 +214,7 @@ struct ProjectWindowModelTests {
         })
     }
 
-    @Test func removingActiveProjectSelectsRemainingProjectWithoutCreatingTerminal() throws {
+    @Test func removingActiveProjectSelectsRemainingProjectWithItsDefaultTerminal() throws {
         let fixture = try ProjectWindowFixture()
         defer { fixture.cleanUp() }
         let settings = fixture.makeSettings()
@@ -226,7 +228,8 @@ struct ProjectWindowModelTests {
         #expect(settings.projects == [secondProject])
         #expect(model.context(for: firstProject.root) == nil)
         #expect(model.activeProjectRoot == secondProject.root)
-        #expect(model.activeWorkspace?.sessions.isEmpty == true)
+        #expect(model.activeWorkspace?.terminalSessions.count == 1)
+        #expect(model.activeWorkspace?.sessions.count == 1)
     }
 }
 
