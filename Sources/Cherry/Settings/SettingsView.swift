@@ -38,10 +38,48 @@ struct SettingsView: View {
     }
 }
 
-private enum SettingsSelection: Hashable {
+enum SettingsSelection: Hashable {
     case page(SettingsPage)
     case project(String)
     case emptySearch
+}
+
+struct SettingsNavigationHistory {
+    private(set) var entries: [SettingsSelection]
+    private(set) var index: Int
+
+    init(initialSelection: SettingsSelection) {
+        entries = [initialSelection]
+        index = entries.startIndex
+    }
+
+    var canGoBack: Bool {
+        index > entries.startIndex
+    }
+
+    var canGoForward: Bool {
+        index < entries.index(before: entries.endIndex)
+    }
+
+    mutating func record(_ selection: SettingsSelection) {
+        guard entries[index] != selection else { return }
+
+        entries.removeSubrange(entries.index(after: index)..<entries.endIndex)
+        entries.append(selection)
+        index = entries.index(before: entries.endIndex)
+    }
+
+    mutating func goBack() -> SettingsSelection? {
+        guard canGoBack else { return nil }
+        index -= 1
+        return entries[index]
+    }
+
+    mutating func goForward() -> SettingsSelection? {
+        guard canGoForward else { return nil }
+        index += 1
+        return entries[index]
+    }
 }
 
 private struct SettingsNavigationSplitView: View {
@@ -49,12 +87,34 @@ private struct SettingsNavigationSplitView: View {
     @Binding var searchText: String
     @ObservedObject var terminalSettings: TerminalSettings
     @ObservedObject var agentSettings: AgentSettings
-    @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @State private var navigationHistory: [SettingsSelection] = [.page(.general)]
-    @State private var navigationHistoryIndex = 0
-    @FocusState private var isSidebarFocused: Bool
     let pages: [SettingsPage]
     let projects: [CherryProject]
+
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var navigationHistory = SettingsNavigationHistory(
+        initialSelection: .page(.general)
+    )
+    @FocusState private var isSidebarFocused: Bool
+
+    private var canGoBack: Bool {
+        navigationHistory.canGoBack
+    }
+
+    private var canGoForward: Bool {
+        navigationHistory.canGoForward
+    }
+
+    private var sidebarSelection: Binding<SettingsSelection?> {
+        Binding(
+            get: { selection },
+            set: { newSelection in
+                if let newSelection {
+                    selection = newSelection
+                    isSidebarFocused = true
+                }
+            }
+        )
+    }
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -132,44 +192,18 @@ private struct SettingsNavigationSplitView: View {
         }
     }
 
-    private var canGoBack: Bool {
-        navigationHistoryIndex > navigationHistory.startIndex
-    }
-
-    private var canGoForward: Bool {
-        navigationHistoryIndex < navigationHistory.index(before: navigationHistory.endIndex)
-    }
-
     private func goBack() {
-        guard canGoBack else { return }
-        navigationHistoryIndex -= 1
-        selection = navigationHistory[navigationHistoryIndex]
+        guard let previousSelection = navigationHistory.goBack() else { return }
+        selection = previousSelection
     }
 
     private func goForward() {
-        guard canGoForward else { return }
-        navigationHistoryIndex += 1
-        selection = navigationHistory[navigationHistoryIndex]
+        guard let nextSelection = navigationHistory.goForward() else { return }
+        selection = nextSelection
     }
 
     private func recordNavigation(to newSelection: SettingsSelection) {
-        guard navigationHistory[navigationHistoryIndex] != newSelection else { return }
-
-        navigationHistory.removeSubrange(navigationHistory.index(after: navigationHistoryIndex)...)
-        navigationHistory.append(newSelection)
-        navigationHistoryIndex = navigationHistory.index(before: navigationHistory.endIndex)
-    }
-
-    private var sidebarSelection: Binding<SettingsSelection?> {
-        Binding(
-            get: { selection },
-            set: { newSelection in
-                if let newSelection {
-                    selection = newSelection
-                    isSidebarFocused = true
-                }
-            }
-        )
+        navigationHistory.record(newSelection)
     }
 
     @ViewBuilder
