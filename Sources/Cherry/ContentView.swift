@@ -4938,7 +4938,7 @@ private struct SidebarTabsPage: View {
         )
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 12) {
-                if let projectManager {
+                if let projectManager, projectManager.hasMultipleProjects {
                     SidebarProjectAgentGroups(
                         settings: agentSettings,
                         projectManager: projectManager,
@@ -6316,21 +6316,15 @@ private struct AgentLaunchMenu: View {
                 openSettings()
             }
         } label: {
-            Color.clear
+            Image(systemName: "plus")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(palette.headerText)
                 .frame(width: 24, height: 28)
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .buttonStyle(.plain)
-        .overlay {
-            Image(systemName: "plus")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(palette.headerText)
-                .frame(width: 24, height: 28)
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
-        }
         .accessibilityLabel("Add Agent")
         .help("New agent")
     }
