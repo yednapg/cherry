@@ -7806,8 +7806,34 @@ enum SidebarAgentAttentionPresentation {
 }
 
 enum SidebarAgentWorkingPresentation {
-    static func shouldShow(prediction: TerminalAttentionPrediction?) -> Bool {
-        prediction?.turnState == .active && prediction?.needsAttention == false
+    static func shouldShow(
+        prediction: TerminalAttentionPrediction?,
+        activityState: AgentActivityState,
+        activityEvidenceIsStrong: Bool
+    ) -> Bool {
+        if activityState == .working {
+            // Direct terminal evidence is newer and more precise than a model
+            // prediction retained from the preceding turn.
+            if activityEvidenceIsStrong {
+                return true
+            }
+
+            // @Published native state changes arrive before the debounced model
+            // observation. When the prediction describes another native state,
+            // it is stale by definition and must not suppress immediate feedback.
+            if let prediction,
+               prediction.nativeActivityState != AgentActivityState.working.rawValue {
+                return true
+            }
+        }
+
+        if let prediction {
+            return prediction.turnState == .active && prediction.needsAttention == false
+        }
+
+        // A submitted turn updates the native activity state immediately, while
+        // the classifier needs a terminal observation before it can predict.
+        return activityState.showsWorkingIndicator
     }
 }
 
@@ -7984,7 +8010,9 @@ private struct SidebarTabRow: View {
                       ) {
                 SidebarAgentAttentionIndicator(prediction: prediction)
             } else if SidebarAgentWorkingPresentation.shouldShow(
-                prediction: rowState.attentionClassifierPrediction
+                prediction: rowState.attentionClassifierPrediction,
+                activityState: rowState.agentActivityState,
+                activityEvidenceIsStrong: rowState.agentActivityEvidenceIsStrong
             ) {
                 SidebarAgentWorkingIndicator(isSelected: isSelected, palette: palette)
             }
@@ -8057,6 +8085,7 @@ private final class SidebarTabRowState: ObservableObject {
     @Published private(set) var label: SidebarTerminalPathLabel
     @Published private(set) var hasUnreadNotification: Bool
     @Published private(set) var agentActivityState: AgentActivityState
+    @Published private(set) var agentActivityEvidenceIsStrong: Bool
     @Published private(set) var attentionClassifierPrediction: TerminalAttentionPrediction?
     @Published private(set) var hasUnacknowledgedAttention: Bool
     @Published private(set) var nixShellEnvironment: NixShellEnvironment?
@@ -8078,6 +8107,7 @@ private final class SidebarTabRowState: ObservableObject {
         self.label = Self.label(for: session, pathDisplayMode: pathDisplayMode)
         self.hasUnreadNotification = session.hasUnreadNotification
         self.agentActivityState = session.agentActivityState
+        self.agentActivityEvidenceIsStrong = session.agentActivityEvidenceIsStrong
         self.attentionClassifierPrediction = session.attentionClassifierPrediction
         self.hasUnacknowledgedAttention = session.hasUnacknowledgedAttention
         self.nixShellEnvironment = session.nixShellEnvironment
@@ -8136,10 +8166,11 @@ private final class SidebarTabRowState: ObservableObject {
             .store(in: &cancellables)
 
         session.$agentActivityState
-            .removeDuplicates()
-            .sink { [weak self] state in
-                Task { @MainActor [weak self] in
+            .sink { [weak self, weak session] state in
+                Task { @MainActor [weak self, weak session] in
                     self?.agentActivityState = state
+                    self?.agentActivityEvidenceIsStrong =
+                        session?.agentActivityEvidenceIsStrong ?? false
                 }
             }
             .store(in: &cancellables)

@@ -7615,6 +7615,51 @@ private struct MCPWhoamiPayload: Decodable {
 }
 
 @MainActor
+@Test func codexWorkingMarkerRecoversTurnWhenHostSubmissionWasMissed() async throws {
+    let session = TerminalSession(
+        title: "Codex",
+        subtitle: "codex --yolo",
+        tint: .systemGreen,
+        launchShell: false,
+        kind: .agent,
+        agentName: "Codex"
+    )
+
+    // Establish a genuinely completed previous turn and its classifier result.
+    session.noteTestingInput(Data("Finish the previous task\n".utf8))
+    session.ingestTestingData(Data("""
+    Previous task complete.
+    \u{203A} Ask a follow-up
+    """.utf8))
+
+    #expect(await waitForCondition {
+        session.agentActivityState == .idle
+            && session.attentionClassifierPrediction?.turnState == .completed
+    })
+
+    // Cherry sees the next draft, but the embedded terminal sends Enter to the
+    // harness without reporting that key to Cherry. The live Codex marker must
+    // recover the new turn instead of leaving the previous `completed`
+    // prediction in charge.
+    session.noteTestingInput(Data("Start another task".utf8))
+    session.ingestTestingData(Data("""
+
+    Working (2m13s • esc to interrupt)
+    """.utf8))
+
+    #expect(await waitForCondition {
+        session.agentActivityState == .working
+            && session.attentionClassifierPrediction?.turnState == .active
+    })
+    #expect(session.agentActivityEvidenceIsStrong)
+    #expect(SidebarAgentWorkingPresentation.shouldShow(
+        prediction: session.attentionClassifierPrediction,
+        activityState: session.agentActivityState,
+        activityEvidenceIsStrong: session.agentActivityEvidenceIsStrong
+    ))
+}
+
+@MainActor
 @Test func renderedPiInputPromptDoesNotTurnAnIdleRepaintIntoWorkingOutput() async throws {
     TerminalNotificationCenter.shared.isDeliveryEnabled = false
     defer { TerminalNotificationCenter.shared.isDeliveryEnabled = true }

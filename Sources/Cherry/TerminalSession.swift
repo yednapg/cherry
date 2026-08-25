@@ -4147,11 +4147,41 @@ final class TerminalSession: ObservableObject, Identifiable {
     private func markAgentWorking(source: AgentActivitySource) -> Bool {
         guard agentActivitySource != .processExit else { return false }
         guard agentActivityState != .permission, agentActivityState != .error else { return false }
+
+        // A live working marker or a pulsing harness title is direct evidence
+        // that a turn is active. Recover the turn boundary here as well as from
+        // host input: AppKit/terminal integrations can occasionally deliver the
+        // submitted bytes without Cherry seeing the originating Enter event.
+        // Without this recovery, the native state becomes `working` while the
+        // attention model remains pinned to the previous `completed` turn and
+        // the sidebar hides the spinner.
+        let recoveredTurn = (source == .workingMarker || source == .titleSpinner)
+            && agentTurnState != .active
+            && hasUnsubmittedHumanInput
+        if recoveredTurn {
+            // The harness accepted the draft even though Cherry missed the
+            // submission key. Reconstruct the same bookkeeping performed by
+            // `AgentDraftInputEffect.submitted`. Requiring a pending draft is
+            // important: a completed TUI can repaint an old Working line, and
+            // that repaint must not manufacture a new turn.
+            hasUnsubmittedHumanInput = false
+            noteHumanInputIfNeeded()
+            agentTurnState = .active
+            hasHarnessNotificationForAttentionEpisode = false
+            isAttentionEpisodeActive = false
+            hasUnacknowledgedAttention = false
+        }
+
         cancelAgentIdleConfirmation()
         if source == .workingMarker || source == .titleSpinner {
             lastStrongWorkingEvidenceAt = Date()
         }
-        return setAgentActivityState(.working, source: source)
+        let stateChanged = setAgentActivityState(.working, source: source)
+        if recoveredTurn, !stateChanged {
+            scheduleAttentionObservation(event: .contentChanged)
+            bumpRevision()
+        }
+        return stateChanged || recoveredTurn
     }
 
     @discardableResult

@@ -44,7 +44,11 @@ struct TerminalAttentionClassifierTests {
             hasUnacknowledgedAttention: false,
             isFocused: false
         ))
-        #expect(!SidebarAgentWorkingPresentation.shouldShow(prediction: prediction))
+        #expect(SidebarAgentWorkingPresentation.shouldShow(
+            prediction: prediction,
+            activityState: .working,
+            activityEvidenceIsStrong: false
+        ))
         #expect(TerminalAttentionClassifier.parameterCount == 47)
         #expect(prediction.debugReport.contains("Native evidence: prompt_marker"))
         #expect(prediction.contributions.first?.name == "boolean.interaction.hasUnsubmittedInput=false")
@@ -85,7 +89,11 @@ struct TerminalAttentionClassifierTests {
             hasUnacknowledgedAttention: false,
             isFocused: false
         ))
-        #expect(SidebarAgentWorkingPresentation.shouldShow(prediction: prediction))
+        #expect(SidebarAgentWorkingPresentation.shouldShow(
+            prediction: prediction,
+            activityState: .idle,
+            activityEvidenceIsStrong: false
+        ))
     }
 
     @Test func classifierUsesTurnStatesAddedByCorrectionRetraining() {
@@ -113,7 +121,7 @@ struct TerminalAttentionClassifierTests {
         }
     }
 
-    @Test func workingIndicatorRequiresActiveClassifierPrediction() {
+    @Test func workingIndicatorUsesNativeStateUntilClassifierPredictionArrives() {
         let completed = TerminalAttentionClassifier.shared.predict(fixture(
             event: .activityStateChanged,
             activityState: "idle",
@@ -131,8 +139,26 @@ struct TerminalAttentionClassifierTests {
             turnState: .completed
         ))
 
-        #expect(!SidebarAgentWorkingPresentation.shouldShow(prediction: completed))
-        #expect(!SidebarAgentWorkingPresentation.shouldShow(prediction: nil))
+        #expect(SidebarAgentWorkingPresentation.shouldShow(
+            prediction: completed,
+            activityState: .working,
+            activityEvidenceIsStrong: false
+        ))
+        #expect(SidebarAgentWorkingPresentation.shouldShow(
+            prediction: completed,
+            activityState: .working,
+            activityEvidenceIsStrong: true
+        ))
+        #expect(SidebarAgentWorkingPresentation.shouldShow(
+            prediction: nil,
+            activityState: .working,
+            activityEvidenceIsStrong: false
+        ))
+        #expect(!SidebarAgentWorkingPresentation.shouldShow(
+            prediction: nil,
+            activityState: .idle,
+            activityEvidenceIsStrong: false
+        ))
     }
 
     @Test func attentionNotificationGateDeduplicatesAndRearms() {
