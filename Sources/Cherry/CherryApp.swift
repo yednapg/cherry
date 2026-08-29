@@ -317,22 +317,24 @@ struct CherryApp: App {
                     if chromeState?.closeSelectedNoteIfNeeded() == true {
                         return
                     }
-                    if !SessionCloseCoordinator.shouldCloseWindow(
+                    guard let session = workspace.selectedSession else { return }
+                    if session.kind != .terminal,
+                       SessionCloseCoordinator.shouldCloseWindow(
                         for: workspace,
                         repository: keyWindowRepository
                     ) {
-                        guard let session = workspace.selectedSession else { return }
+                        NSApp.keyWindow?.performClose(nil)
+                    } else {
                         SessionCloseCoordinator.close(
                             session,
                             in: workspace,
                             chromeState: chromeState,
-                            allowEmptyWorkspace: SessionCloseCoordinator.hasOpenSessionsInOtherWorktrees(
-                                than: workspace,
-                                repository: keyWindowRepository
-                            )
+                            allowEmptyWorkspace: session.kind != .terminal
+                                && SessionCloseCoordinator.hasOpenSessionsInOtherWorktrees(
+                                    than: workspace,
+                                    repository: keyWindowRepository
+                                )
                         )
-                    } else {
-                        NSApp.keyWindow?.performClose(nil)
                     }
                 }
                 .keyboardShortcut("w")

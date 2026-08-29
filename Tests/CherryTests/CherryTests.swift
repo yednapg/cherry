@@ -5984,6 +5984,30 @@ private struct MCPWhoamiPayload: Decodable {
 }
 
 @MainActor
+@Test func workspaceCloseReplacesLastTerminalAndKeepsOtherSessionKinds() throws {
+    let workspace = TerminalWorkspace(launchBackend: .hostManaged)
+    defer { workspace.closeAllSessions() }
+
+    let terminal = try #require(workspace.terminalSessions.first)
+    let workingDirectory = terminal.workingDirectory
+    let agent = workspace.addAgentSession(
+        agent: AgentToolDefinition(name: "Agent", command: "/bin/cat"),
+        projectRoot: workingDirectory,
+        select: false
+    )
+
+    workspace.close(terminal)
+
+    let replacement = try #require(workspace.terminalSessions.first)
+    #expect(replacement.id != terminal.id)
+    #expect(replacement.workingDirectory == workingDirectory)
+    #expect(workspace.terminalSessions.count == 1)
+    #expect(workspace.sessions.contains { $0.id == agent.id })
+    #expect(workspace.selectedSessionID == replacement.id)
+    #expect(workspace.terminalDisplayItems == [.single(replacement.id)])
+}
+
+@MainActor
 @Test func ghosttyLiveBridgeCountTracksReleasedResourcesBeforeObjectDeinit() {
     let session = TerminalSession(
         title: "Bridge",
@@ -9031,6 +9055,27 @@ private func claudeAlternateScreenFrame(rows: [String]) -> Data {
 }
 
 @MainActor
+@Test func workspaceCloseLastSplitGroupCreatesReplacementTerminal() throws {
+    let workspace = TerminalWorkspace(launchBackend: .hostManaged)
+    workspace.updateTerminalDetailWidth(1_200)
+    defer { workspace.closeAllSessions() }
+
+    let first = try #require(workspace.terminalSessions.first)
+    let second = try #require(workspace.splitDuplicateActiveTerminal())
+    let group = try #require(workspace.splitGroup(containing: first.id))
+
+    #expect(workspace.canCloseSplitGroup(id: group.id))
+    workspace.closeSplitGroup(id: group.id)
+
+    let replacement = try #require(workspace.terminalSessions.first)
+    #expect(replacement.id != first.id)
+    #expect(replacement.id != second.id)
+    #expect(workspace.terminalSessions.count == 1)
+    #expect(workspace.selectedSessionID == replacement.id)
+    #expect(workspace.terminalDisplayItems == [.single(replacement.id)])
+}
+
+@MainActor
 @Test func workspaceShortcutSelectionFollowsSidebarOrder() async throws {
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -10382,6 +10427,69 @@ private func waitForSummaryCallCount(
 }
 
 @MainActor
+@Test func appShortcutMonitorCommandWReplacesLastTerminalAndKeepsWindowOpen() throws {
+    let storageDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("CherryShortcutLastTerminal-\(UUID().uuidString)", isDirectory: true)
+    let workspace = TerminalWorkspace(launchBackend: .hostManaged)
+    let originalTerminal = try #require(workspace.terminalSessions.first)
+    let chromeState = ProjectWindowChromeState()
+    let noteStore = ProjectNoteStore(
+        projectRoot: NSHomeDirectory(),
+        storageDirectory: storageDirectory.appendingPathComponent("notes", isDirectory: true)
+    )
+    let todoStore = ProjectTodoStore(
+        projectRoot: NSHomeDirectory(),
+        storageDirectory: storageDirectory.appendingPathComponent("todos", isDirectory: true)
+    )
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 640, height: 400),
+        styleMask: [.titled, .closable],
+        backing: .buffered,
+        defer: false
+    )
+    window.isReleasedWhenClosed = false
+    window.orderFrontRegardless()
+
+    let coordinator = AppShortcutMonitor.Coordinator(
+        workspace: workspace,
+        chromeState: chromeState,
+        noteStore: noteStore,
+        todoStore: todoStore,
+        projectRoot: NSHomeDirectory(),
+        visibleCommandNames: [],
+        visibleCommands: [],
+        projectFeatures: ProjectFeatureSettings(notesEnabled: false, todosEnabled: false),
+        openSettings: {}
+    )
+    coordinator.window = window
+
+    defer {
+        _ = coordinator
+        workspace.closeAllSessions()
+        window.close()
+        try? FileManager.default.removeItem(at: storageDirectory)
+    }
+
+    coordinator.closeSelectedSessionOrWindow()
+
+    let replacement = try #require(workspace.terminalSessions.first)
+    #expect(replacement.id != originalTerminal.id)
+    #expect(replacement.title == "Shell 2")
+    #expect(workspace.terminalSessions.count == 1)
+    #expect(workspace.selectedSessionID == replacement.id)
+    #expect(window.isVisible)
+
+    coordinator.closeSelectedSessionOrWindow()
+
+    let nextReplacement = try #require(workspace.terminalSessions.first)
+    #expect(nextReplacement.id != replacement.id)
+    #expect(nextReplacement.title == "Shell 3")
+    #expect(workspace.terminalSessions.count == 1)
+    #expect(workspace.selectedSessionID == nextReplacement.id)
+    #expect(window.isVisible)
+}
+
+@MainActor
 @Test func appShortcutMonitorCommandWKeepsWindowOpenForSessionsInOtherWorktrees() async throws {
     let container = FileManager.default.temporaryDirectory
         .appendingPathComponent("CherryShortcutWorktreeClose-\(UUID().uuidString)", isDirectory: true)
@@ -10462,9 +10570,11 @@ private func waitForSummaryCallCount(
         for: workspace,
         repository: repository
     ))
+    let originalSessionID = try #require(workspace.selectedSessionID)
     coordinator.closeSelectedSessionOrWindow()
 
-    #expect(workspace.sessions.isEmpty)
+    #expect(!workspace.sessions.contains { $0.id == originalSessionID })
+    #expect(workspace.terminalSessions.count == 1)
     #expect(otherWorkspace.sessions.map(\.id) == [otherSession.id])
     #expect(window.isVisible)
 }

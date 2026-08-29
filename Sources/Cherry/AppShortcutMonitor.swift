@@ -293,22 +293,24 @@ struct AppShortcutMonitor: NSViewRepresentable {
                 return
             }
 
-            if !SessionCloseCoordinator.shouldCloseWindow(
+            guard let session = workspace.selectedSession else { return }
+            if session.kind != .terminal,
+               SessionCloseCoordinator.shouldCloseWindow(
                 for: workspace,
                 repository: repository
             ) {
-                guard let session = workspace.selectedSession else { return }
+                window?.performClose(nil)
+            } else {
                 SessionCloseCoordinator.close(
                     session,
                     in: workspace,
                     chromeState: chromeState,
-                    allowEmptyWorkspace: SessionCloseCoordinator.hasOpenSessionsInOtherWorktrees(
-                        than: workspace,
-                        repository: repository
-                    )
+                    allowEmptyWorkspace: session.kind != .terminal
+                        && SessionCloseCoordinator.hasOpenSessionsInOtherWorktrees(
+                            than: workspace,
+                            repository: repository
+                        )
                 )
-            } else {
-                window?.performClose(nil)
             }
         }
 

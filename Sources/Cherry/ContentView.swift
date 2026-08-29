@@ -5963,10 +5963,9 @@ private struct SidebarProjectGroupHeader: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .frame(height: 28)
                 .padding(.leading, 5)
-                // The accessory owns a 24pt hit target with its glyph centered
-                // inside it. Let that target supply the trailing visual inset;
-                // adding this padding as well made the activity/count cluster
-                // sit noticeably farther from + than its internal 7pt spacing.
+                // The accessory supplies its own trailing footprint. Let it
+                // provide the visual inset so the activity/count cluster stays
+                // close to the action without crowding the native menu indicator.
                 .padding(.trailing, accessory == nil ? 6 : 0)
                 .contentShape(Rectangle())
             }
@@ -6034,7 +6033,10 @@ private struct SidebarProjectGroupHeader: View {
                 openSettings: openSettings,
                 launch: launch
             )
-            .frame(width: 24, height: 28)
+            // Preserve the Menu's intrinsic width: it includes both the 24pt
+            // plus label and macOS's menu indicator. Constraining the complete
+            // control to 24pt compresses those glyphs in multi-project rows.
+            .fixedSize(horizontal: true, vertical: false)
             .help(help)
         }
     }
@@ -6323,7 +6325,6 @@ private struct AgentLaunchMenu: View {
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
         .buttonStyle(.plain)
         .accessibilityLabel("Add Agent")
         .help("New agent")
@@ -7423,7 +7424,6 @@ private struct SidebarSessionSection: View {
         Button("Close", role: .destructive) {
             workspace.close(session)
         }
-        .disabled(workspace.sessions.count <= 1)
     }
 }
 
@@ -7758,7 +7758,6 @@ private struct SidebarSplitPaneIconSelector: View {
             Button("Close Pane", role: .destructive) {
                 workspace.close(session)
             }
-            .disabled(workspace.sessions.count <= 1)
 
             if let group = workspace.splitGroup(containing: session.id) {
                 Divider()
@@ -10870,7 +10869,7 @@ struct TerminalSplitSceneView: View {
                             guard let workspace,
                                   let session = workspace.session(withID: sessionID)
                             else { return }
-                            workspace.close(session, allowEmptyWorkspace: true)
+                            workspace.close(session)
                         }
                     )
                     .frame(width: width(at: index, in: widths))

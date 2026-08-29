@@ -1079,6 +1079,7 @@ final class TerminalWorkspace: ObservableObject {
     }
     let projectRoot: String?
     private let launchBackend: TerminalSessionLaunchBackend
+    private var nextTerminalSessionIndex = 1
 
 #if DEBUG
     var hiddenAgentSummarySchedulingObserverForTesting: (() -> Void)?
@@ -1103,6 +1104,7 @@ final class TerminalWorkspace: ObservableObject {
             projectRoot: self.projectRoot,
             launchBackend: launchBackend
         )
+        nextTerminalSessionIndex = 2
         sessions = [firstSession]
         terminalDisplayItems = [.single(firstSession.id)]
         selectedSessionID = firstSession.id
@@ -1306,8 +1308,10 @@ final class TerminalWorkspace: ObservableObject {
         let resolvedWorkingDirectory = workingDirectory
             ?? selectedSession?.workingDirectory
             ?? projectRoot
+        let sessionIndex = nextTerminalSessionIndex
+        nextTerminalSessionIndex += 1
         let session = Self.makeSession(
-            index: sessions.count + 1,
+            index: sessionIndex,
             title: title,
             workingDirectory: resolvedWorkingDirectory,
             projectRoot: projectRoot,
@@ -1635,8 +1639,7 @@ final class TerminalWorkspace: ObservableObject {
     }
 
     func canCloseSplitGroup(id groupID: UUID) -> Bool {
-        guard let group = splitGroup(id: groupID) else { return false }
-        return sessions.count > group.paneSessionIDs.count
+        splitGroup(id: groupID) != nil
     }
 
     func closeSplitGroup(id groupID: UUID) {
@@ -1892,11 +1895,29 @@ final class TerminalWorkspace: ObservableObject {
         replacementSelectionID: UUID? = nil,
         allowEmptyWorkspace: Bool = false
     ) {
-        guard !removedIDs.isEmpty,
-              allowEmptyWorkspace || sessions.count > removedIDs.count
-        else {
+        guard !removedIDs.isEmpty else {
             return
         }
+
+        var resolvedReplacementSelectionID = replacementSelectionID
+        let removedTerminalSessions = terminalSessions.filter { removedIDs.contains($0.id) }
+        // Interactive closes should never strand a workspace without a terminal.
+        // Add the replacement first so observers never see an empty terminal list;
+        // explicit workspace teardown uses closeAllSessions() and bypasses this path.
+        if !allowEmptyWorkspace,
+           !removedTerminalSessions.isEmpty,
+           removedTerminalSessions.count == terminalSessions.count {
+            let replacementWorkingDirectory = removedTerminalSessions.first(where: {
+                $0.id == selectedSessionID
+            })?.workingDirectory ?? removedTerminalSessions[0].workingDirectory
+            let replacement = addSession(
+                workingDirectory: replacementWorkingDirectory,
+                select: false
+            )
+            resolvedReplacementSelectionID = replacement.id
+        }
+
+        guard allowEmptyWorkspace || sessions.count > removedIDs.count else { return }
 
         let removedIndex = sessions.firstIndex { removedIDs.contains($0.id) }
         let removedSessions = sessions.filter { removedIDs.contains($0.id) }
@@ -1911,8 +1932,8 @@ final class TerminalWorkspace: ObservableObject {
               removedIDs.contains(currentSelectedSessionID)
         else { return }
 
-        if let replacementSelectionID,
-           let replacementSession = session(withID: replacementSelectionID) {
+        if let resolvedReplacementSelectionID,
+           let replacementSession = session(withID: resolvedReplacementSelectionID) {
             select(replacementSession)
             return
         }
